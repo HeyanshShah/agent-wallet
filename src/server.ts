@@ -1,0 +1,40 @@
+import { randomBytes } from "node:crypto";
+import { serve } from "@hono/node-server";
+import { serveStatic } from "@hono/node-server/serve-static";
+import { openDb, getSetting, setSetting } from "./db.js";
+import { issuerFromEnv } from "./cards.js";
+import { Notifier } from "./notify.js";
+import { Wallet, hashKey } from "./wallet.js";
+import { createApp } from "./app.js";
+
+try {
+  process.loadEnvFile(".env");
+} catch {
+  // No .env file; use defaults and the real environment.
+}
+
+const env = process.env;
+const db = openDb(env.DATABASE_PATH ?? "./data/wallet.db");
+const issuer = issuerFromEnv(env);
+const notifier = new Notifier(db, { subject: env.VAPID_SUBJECT });
+const wallet = new Wallet(db, issuer, notifier, Number(env.APPROVAL_TIMEOUT_MINUTES ?? 15));
+
+// The owner token unlocks the approval app. Generated once and shown on first start.
+let ownerTokenHash = getSetting(db, "owner_token_hash");
+if (env.OWNER_TOKEN) {
+  ownerTokenHash = hashKey(env.OWNER_TOKEN);
+} else if (!ownerTokenHash) {
+  const token = `aw_owner_${randomBytes(24).toString("base64url")}`;
+  ownerTokenHash = hashKey(token);
+  setSetting(db, "owner_token_hash", ownerTokenHash);
+  console.log("\n  Your owner token (shown once, save it to sign in to the approval app):\n");
+  console.log(`  ${token}\n`);
+}
+
+const app = createApp({ wallet, notifier, ownerTokenHash, enableDemoCharge: issuer.name === "mock" });
+app.use("/*", serveStatic({ root: "./public" }));
+
+const port = Number(env.PORT ?? 3000);
+serve({ fetch: app.fetch, port }, () => {
+  console.log(`Agent Wallet running at http://localhost:${port} (card issuer: ${issuer.name})`);
+});
