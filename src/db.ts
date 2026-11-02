@@ -86,6 +86,11 @@ function migrate(db: Db): void {
   if (!has("purchase_requests", "risk_flags")) {
     db.exec("ALTER TABLE purchase_requests ADD COLUMN risk_flags TEXT NOT NULL DEFAULT '[]'");
   }
+  if (!has("purchase_requests", "product")) {
+    db.exec("ALTER TABLE purchase_requests ADD COLUMN product TEXT");
+    db.exec("ALTER TABLE purchase_requests ADD COLUMN product_url TEXT");
+    db.exec("ALTER TABLE purchase_requests ADD COLUMN price_check TEXT");
+  }
 }
 
 export function getSetting(db: Db, key: string): string | undefined {

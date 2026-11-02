@@ -7,6 +7,7 @@ import { Notifier } from "./notify.js";
 import { Wallet, hashKey } from "./wallet.js";
 import { createApp } from "./app.js";
 import { Passkeys, passkeyConfigFromUrl } from "./passkeys.js";
+import { priceLookupFromEnv } from "./prices.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
@@ -20,7 +21,8 @@ const env = process.env;
 const db = openDb(env.DATABASE_PATH ?? "./data/wallet.db");
 const issuer = issuerFromEnv(env);
 const notifier = new Notifier(db, { subject: env.VAPID_SUBJECT });
-const wallet = new Wallet(db, issuer, notifier, Number(env.APPROVAL_TIMEOUT_MINUTES ?? 15));
+const priceLookup = priceLookupFromEnv(env);
+const wallet = new Wallet(db, issuer, notifier, Number(env.APPROVAL_TIMEOUT_MINUTES ?? 15), priceLookup);
 
 // The owner token unlocks the approval app. Generated once and shown on first start.
 let ownerTokenHash = getSetting(db, "owner_token_hash");
@@ -44,5 +46,5 @@ app.get("/vendor/simplewebauthn.js", (c) => c.body(webauthnBundle, 200, { "Conte
 app.use("/*", serveStatic({ root: fileURLToPath(new URL("../public", import.meta.url)) }));
 
 serve({ fetch: app.fetch, port }, () => {
-  console.log(`Agent Wallet running at http://localhost:${port} (card issuer: ${issuer.name})`);
+  console.log(`Agent Wallet running at http://localhost:${port} (cards: ${issuer.name}, price checks: ${priceLookup?.name ?? "off"})`);
 });
