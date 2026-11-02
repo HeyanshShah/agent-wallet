@@ -192,6 +192,25 @@ describe("purchase flow", () => {
     expect((await quick(b.id, "deny", tokenB)).status).toBe(409); // already decided
   });
 
+  it("summarizes spending in insights", async () => {
+    await buy(2_000, "Amazon");
+    const big = await (await t.req("POST", "/v1/purchases", agentKey, { amount_cents: 9_000, merchant: "Best Buy", category: "electronics", reason: "x" })).json();
+    await t.req("POST", `/api/requests/${big.id}/approve`, OWNER);
+    await buy(99_999); // blocked
+    const scam = await (await buy(1_000, "paypa1.com")).json();
+    await t.req("POST", `/api/requests/${scam.id}/deny`, OWNER);
+
+    const ins = await (await t.req("GET", "/api/insights", OWNER)).json();
+    expect(ins.spentCents).toBe(11_000);
+    expect(ins.stoppedCents).toBe(100_999);
+    expect(ins.riskyStopped).toBe(1);
+    expect(ins.counts).toMatchObject({ autoApproved: 1, approved: 1, blocked: 1, denied: 1 });
+    expect(ins.byCategory[0]).toEqual({ label: "electronics", cents: 9_000 });
+    expect(ins.topMerchants.map((m: any) => m.label)).toEqual(["Best Buy", "Amazon"]);
+    expect(ins.months).toHaveLength(6);
+    expect(ins.months.at(-1).cents).toBe(11_000);
+  });
+
   it("writes everything to the activity log", async () => {
     await buy(1_000);
     await buy(99_999);

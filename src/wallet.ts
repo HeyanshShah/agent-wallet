@@ -221,6 +221,66 @@ export class Wallet {
     ).map((r) => ({ amountCents: r.amount_cents, merchant: r.merchant, createdAt: r.created_at }));
   }
 
+  // ---------- insights ----------
+
+  insights(at = new Date()) {
+    const monthStart = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), 1)).toISOString();
+    const spent = `status IN (${SPENT_STATUSES.map((x) => `'${x}'`).join(",")})`;
+    const q = (sql: string, ...args: (string | number)[]) => this.db.prepare(sql).all(...args) as any[];
+
+    const counts = Object.fromEntries(
+      q("SELECT status, COUNT(*) AS n FROM purchase_requests WHERE created_at >= ? GROUP BY status", monthStart).map((r) => [r.status, r.n]),
+    );
+    const sum = (where: string) =>
+      (this.db.prepare(`SELECT COALESCE(SUM(amount_cents), 0) AS c FROM purchase_requests WHERE created_at >= ? AND ${where}`).get(monthStart) as { c: number }).c;
+
+    const sixMonthsAgo = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth() - 5, 1)).toISOString();
+    const byMonth = new Map(
+      q(`SELECT substr(created_at, 1, 7) AS month, SUM(amount_cents) AS cents FROM purchase_requests WHERE ${spent} AND created_at >= ? GROUP BY month`, sixMonthsAgo).map(
+        (r) => [r.month, r.cents],
+      ),
+    );
+    const months = Array.from({ length: 6 }, (_, i) => {
+      const d = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth() - 5 + i, 1));
+      const month = d.toISOString().slice(0, 7);
+      return { month, cents: byMonth.get(month) ?? 0 };
+    });
+
+    return {
+      month: monthStart.slice(0, 7),
+      spentCents: sum(spent),
+      stoppedCents: sum("status IN ('blocked', 'denied')"),
+      riskyStopped: q(
+        `SELECT COUNT(*) AS n FROM purchase_requests WHERE created_at >= ? AND status IN ('blocked', 'denied', 'expired') AND risk_flags LIKE '%"high"%'`,
+        monthStart,
+      )[0].n as number,
+      counts: {
+        autoApproved: counts.auto_approved ?? 0,
+        approved: (counts.approved ?? 0) + (counts.completed ?? 0),
+        denied: counts.denied ?? 0,
+        blocked: counts.blocked ?? 0,
+        expired: counts.expired ?? 0,
+        pending: counts.pending ?? 0,
+      },
+      byAgent: q(
+        `SELECT a.name AS label, SUM(r.amount_cents) AS cents FROM purchase_requests r JOIN agents a ON a.id = r.agent_id
+         WHERE r.${spent} AND r.created_at >= ? GROUP BY a.id ORDER BY cents DESC`,
+        monthStart,
+      ),
+      byCategory: q(
+        `SELECT COALESCE(category, 'Other') AS label, SUM(amount_cents) AS cents FROM purchase_requests
+         WHERE ${spent} AND created_at >= ? GROUP BY label ORDER BY cents DESC`,
+        monthStart,
+      ),
+      topMerchants: q(
+        `SELECT merchant AS label, SUM(amount_cents) AS cents, COUNT(*) AS purchases FROM purchase_requests
+         WHERE ${spent} AND created_at >= ? GROUP BY lower(merchant) ORDER BY cents DESC LIMIT 5`,
+        monthStart,
+      ),
+      months,
+    };
+  }
+
   // ---------- purchase requests ----------
 
   private expireStale(): void {

@@ -241,6 +241,47 @@ async function renderSecurity() {
   }
 }
 
+// ---------- insights ----------
+
+function bars(rows) {
+  if (!rows.length) return `<div class="muted">Nothing yet this month.</div>`;
+  const max = Math.max(...rows.map((r) => r.cents));
+  return rows
+    .map(
+      (r) => `<div class="hbar"><div class="hbar-label"><span>${esc(r.label)}</span><span>${usd(r.cents)}</span></div>
+      <div class="hbar-track"><div style="width:${(r.cents / max) * 100}%"></div></div></div>`,
+    )
+    .join("");
+}
+
+async function renderInsights() {
+  const d = await api("GET", "/api/insights");
+  const max = Math.max(1, ...d.months.map((m) => m.cents));
+  const monthName = (ym) => new Date(`${ym}-15`).toLocaleString([], { month: "short" });
+  const c = d.counts;
+  $("#insights").innerHTML = `
+    <div class="stats">
+      <div class="card stat"><div class="muted">Spent this month</div><div class="big">${usd(d.spentCents)}</div></div>
+      <div class="card stat"><div class="muted">Stopped</div><div class="big good">${usd(d.stoppedCents)}</div></div>
+    </div>
+    ${d.riskyStopped ? `<div class="card flag-card">🛡️ Stopped ${d.riskyStopped} risky purchase${d.riskyStopped === 1 ? "" : "s"} this month.</div>` : ""}
+    <div class="card">
+      <strong>Decisions this month</strong>
+      <div class="chips">
+        <span>${c.autoApproved} auto-approved</span><span>${c.approved} approved by you</span>
+        <span>${c.denied} denied</span><span>${c.blocked} blocked by rules</span>${c.expired ? `<span>${c.expired} expired</span>` : ""}
+      </div>
+    </div>
+    <div class="card"><strong>Last 6 months</strong>
+      <div class="vbars">${d.months
+        .map((m) => `<div class="vbar"><div class="vbar-col"><div style="height:${(m.cents / max) * 100}%" title="${usd(m.cents)}"></div></div><span>${monthName(m.month)}</span></div>`)
+        .join("")}</div>
+    </div>
+    <div class="card"><strong>By agent</strong>${bars(d.byAgent)}</div>
+    <div class="card"><strong>By category</strong>${bars(d.byCategory)}</div>
+    <div class="card"><strong>Top stores</strong>${bars(d.topMerchants)}</div>`;
+}
+
 // ---------- activity ----------
 
 async function renderActivity() {
@@ -298,6 +339,7 @@ async function refresh() {
     if (tab === "approvals") await renderApprovals();
     if (tab === "agents") await Promise.all([renderAgents(), renderSecurity()]);
     if (tab === "activity") await renderActivity();
+    if (tab === "insights") await renderInsights();
     if (tab !== "approvals") await renderApprovals(); // keeps the badge current
   } catch (err) {
     if (err.message !== "Signed out") toast(err.message);

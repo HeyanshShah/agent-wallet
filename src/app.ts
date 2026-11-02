@@ -258,6 +258,8 @@ export function createApp(opts: {
 
   app.get("/api/events", (c) => c.json(wallet.listEvents()));
 
+  app.get("/api/insights", (c) => c.json(wallet.insights()));
+
   app.get("/api/push/key", (c) => c.json({ publicKey: notifier.vapidPublicKey }));
 
   app.post("/api/push/subscribe", async (c) => {
