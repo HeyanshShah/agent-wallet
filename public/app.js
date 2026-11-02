@@ -78,9 +78,11 @@ async function renderApprovals() {
         <div class="amount">${usd(r.amountCents)}</div>
         <div class="merchant">at ${esc(r.merchant)}${r.category ? ` · ${esc(r.category)}` : ""}</div>
         <p class="reason">"${esc(r.reason)}"</p>
+        ${r.riskFlags.filter((f) => f.level !== "info").map((f) => `<div class="flag ${f.level}">${f.level === "high" ? "⚠️" : "⚡"} ${esc(f.message)}</div>`).join("")}
+        ${r.riskFlags.filter((f) => f.level === "info").map((f) => `<div class="flag info">${esc(f.message)}</div>`).join("")}
         <div class="actions">
           <button class="deny" data-deny="${r.id}">Deny</button>
-          <button class="approve" data-approve="${r.id}">Approve</button>
+          <button class="approve" data-approve="${r.id}" data-passkey="${r.needsPasskey}">${r.needsPasskey ? "Approve with Face ID" : "Approve"}</button>
         </div>
         <div class="meta" style="margin-top:10px">Expires ${when(r.expiresAt)}</div>
       </div>`,
@@ -109,14 +111,19 @@ document.addEventListener("click", async (e) => {
   e.target.disabled = true;
   try {
     if (approveId) {
-      const res = await api("POST", `/api/requests/${approveId}/approve`);
+      let body;
+      if (e.target.dataset.passkey === "true") {
+        const optionsJSON = await api("POST", `/api/requests/${approveId}/approve/options`);
+        body = { passkey: await SimpleWebAuthnBrowser.startAuthentication({ optionsJSON }) };
+      }
+      const res = await api("POST", `/api/requests/${approveId}/approve`, body);
       toast(res.request.status === "approved" ? "Approved. A one-time card was sent to the agent." : `Blocked: ${res.request.decisionReason}`);
     } else {
       await api("POST", `/api/requests/${denyId}/deny`);
       toast("Denied.");
     }
   } catch (err) {
-    toast(err.message);
+    toast(err.name === "NotAllowedError" ? "Cancelled." : err.message);
   }
   refresh();
 });
@@ -195,6 +202,86 @@ $("#agent-form").addEventListener("submit", async (e) => {
   }
 });
 
+// ---------- security ----------
+
+async function renderSecurity() {
+  const s = await api("GET", "/api/settings");
+  const on = s.passkeyRequiredOverCents !== null;
+  $("#security").innerHTML = s.passkeyCount
+    ? `<strong>Face ID approvals</strong>
+       <p class="muted">Risky purchases always need Face ID or your fingerprint.${on ? ` So does anything over ${usd(s.passkeyRequiredOverCents)}.` : ""}</p>
+       <form id="passkey-form" class="row" style="align-items:end">
+         <label>Also require it over ($)<input name="over" type="number" min="0" step="0.01" placeholder="Off" value="${on ? (s.passkeyRequiredOverCents / 100).toFixed(2) : ""}"></label>
+         <button class="ghost" type="submit" style="margin-bottom:12px">Save</button>
+       </form>
+       <button class="ghost" id="add-passkey">Add another device</button>`
+    : `<strong>Face ID approvals</strong>
+       <p class="muted">Make big or risky purchases need Face ID or your fingerprint, so a stolen password alone can't approve them.</p>
+       <button class="primary" id="add-passkey">Set up Face ID</button>`;
+  $("#add-passkey").onclick = async () => {
+    try {
+      const optionsJSON = await api("POST", "/api/passkeys/register/options");
+      const response = await SimpleWebAuthnBrowser.startRegistration({ optionsJSON });
+      await api("POST", "/api/passkeys/register/verify", response);
+      toast("Face ID is set up.");
+      renderSecurity();
+    } catch (err) {
+      toast(err.name === "NotAllowedError" ? "Cancelled." : err.message);
+    }
+  };
+  const form = $("#passkey-form");
+  if (form) {
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const v = new FormData(form).get("over");
+      await api("PATCH", "/api/settings", { passkeyRequiredOverCents: v === "" ? null : toCents(v) });
+      toast("Saved.");
+      renderSecurity();
+    };
+  }
+}
+
+// ---------- insights ----------
+
+function bars(rows) {
+  if (!rows.length) return `<div class="muted">Nothing yet this month.</div>`;
+  const max = Math.max(...rows.map((r) => r.cents));
+  return rows
+    .map(
+      (r) => `<div class="hbar"><div class="hbar-label"><span>${esc(r.label)}</span><span>${usd(r.cents)}</span></div>
+      <div class="hbar-track"><div style="width:${(r.cents / max) * 100}%"></div></div></div>`,
+    )
+    .join("");
+}
+
+async function renderInsights() {
+  const d = await api("GET", "/api/insights");
+  const max = Math.max(1, ...d.months.map((m) => m.cents));
+  const monthName = (ym) => new Date(`${ym}-15`).toLocaleString([], { month: "short" });
+  const c = d.counts;
+  $("#insights").innerHTML = `
+    <div class="stats">
+      <div class="card stat"><div class="muted">Spent this month</div><div class="big">${usd(d.spentCents)}</div></div>
+      <div class="card stat"><div class="muted">Stopped</div><div class="big good">${usd(d.stoppedCents)}</div></div>
+    </div>
+    ${d.riskyStopped ? `<div class="card flag-card">🛡️ Stopped ${d.riskyStopped} risky purchase${d.riskyStopped === 1 ? "" : "s"} this month.</div>` : ""}
+    <div class="card">
+      <strong>Decisions this month</strong>
+      <div class="chips">
+        <span>${c.autoApproved} auto-approved</span><span>${c.approved} approved by you</span>
+        <span>${c.denied} denied</span><span>${c.blocked} blocked by rules</span>${c.expired ? `<span>${c.expired} expired</span>` : ""}
+      </div>
+    </div>
+    <div class="card"><strong>Last 6 months</strong>
+      <div class="vbars">${d.months
+        .map((m) => `<div class="vbar"><div class="vbar-col"><div style="height:${(m.cents / max) * 100}%" title="${usd(m.cents)}"></div></div><span>${monthName(m.month)}</span></div>`)
+        .join("")}</div>
+    </div>
+    <div class="card"><strong>By agent</strong>${bars(d.byAgent)}</div>
+    <div class="card"><strong>By category</strong>${bars(d.byCategory)}</div>
+    <div class="card"><strong>Top stores</strong>${bars(d.topMerchants)}</div>`;
+}
+
 // ---------- activity ----------
 
 async function renderActivity() {
@@ -250,8 +337,9 @@ async function refresh() {
   const tab = document.querySelector("nav button.active").dataset.tab;
   try {
     if (tab === "approvals") await renderApprovals();
-    if (tab === "agents") await renderAgents();
+    if (tab === "agents") await Promise.all([renderAgents(), renderSecurity()]);
     if (tab === "activity") await renderActivity();
+    if (tab === "insights") await renderInsights();
     if (tab !== "approvals") await renderApprovals(); // keeps the badge current
   } catch (err) {
     if (err.message !== "Signed out") toast(err.message);

@@ -10,6 +10,14 @@ AI agents can now browse and check out, but handing one your real card is a bad 
 4. **Approved purchases get a one-time card** locked to the approved amount. The agent never sees your real card.
 5. **Everything is logged** in the Activity tab.
 
+What makes it different:
+
+- **Scam radar.** Every request is checked for lookalike stores (`amaz0n-deals.com`, `paypa1.com`), scam payment patterns (gift cards, crypto, wire transfers), double purchases, and amounts far above the agent's usual. A flagged purchase is never approved automatically, however small.
+- **Face ID approvals.** With a passkey set up, risky purchases and anything over an amount you choose need Face ID or your fingerprint. A stolen password alone can't approve them.
+- **One-tap from the notification.** On Android and desktop, approve or deny right from the push notification without opening the app.
+- **Insights.** See spending by agent, category and store, the last 6 months, and how much money your rules stopped.
+- **Works with any agent.** One-line install for Claude and any MCP client, plus an OpenAPI spec for everything else. See [docs/INTEGRATE.md](docs/INTEGRATE.md).
+
 ## Quick start
 
 Requires Node.js 22.13 or newer.
@@ -28,16 +36,40 @@ To see all three outcomes, run the demo in a second terminal and approve the $89
 OWNER_TOKEN=aw_owner_... npm run demo
 ```
 
+Or run it without cloning:
+
+```bash
+npx github:HeyanshShah/agent-wallet
+```
+
+## Deploy (so your phone can reach it)
+
+Phone notifications and Face ID need HTTPS. The easiest route is [Render](https://render.com/deploy?repo=https://github.com/HeyanshShah/agent-wallet), which reads `render.yaml`: it builds the Dockerfile, adds a disk for the database, and generates your `OWNER_TOKEN` (find it under the service's Environment tab). Set `PUBLIC_URL` to the address Render gives you.
+
+Any Docker host works too:
+
+```bash
+docker build -t agent-wallet .
+docker run -p 3000:3000 -v wallet-data:/data -e OWNER_TOKEN=pick-a-long-secret -e PUBLIC_URL=https://your-domain agent-wallet
+```
+
 ## Connect Claude (or any MCP agent)
 
-In the app, go to **Agents → Add an agent**. Copy the key it shows (it is only shown once), then add this to your MCP client config, for example `claude_desktop_config.json`:
+In the app, go to **Agents → Add an agent**. Copy the key it shows (it is only shown once). For Claude Code:
+
+```bash
+claude mcp add agent-wallet -e WALLET_URL=http://localhost:3000 -e WALLET_AGENT_KEY=aw_agent_... \
+  -- npx -y -p github:HeyanshShah/agent-wallet agent-wallet-mcp
+```
+
+For Claude Desktop and other MCP clients, add this to the config (for example `claude_desktop_config.json`):
 
 ```json
 {
   "mcpServers": {
     "agent-wallet": {
       "command": "npx",
-      "args": ["tsx", "/absolute/path/to/agent-wallet/src/mcp.ts"],
+      "args": ["-y", "-p", "github:HeyanshShah/agent-wallet", "agent-wallet-mcp"],
       "env": {
         "WALLET_URL": "http://localhost:3000",
         "WALLET_AGENT_KEY": "aw_agent_..."
@@ -57,7 +89,13 @@ The agent gets three tools:
 
 ## Phone notifications
 
-The approval app is a PWA. On your phone, open the server's URL, then **Add to Home Screen**, open it from there, and tap **Notifications**. iPhone needs iOS 16.4 or newer, and push only works over HTTPS. For a quick test from your phone, put the server behind a tunnel such as `cloudflared tunnel --url http://localhost:3000` or ngrok.
+The approval app is a PWA. On your phone, open the server's URL, then **Add to Home Screen**, open it from there, and tap **Notifications**. iPhone needs iOS 16.4 or newer, and push only works over HTTPS. For a quick test from your phone, put the server behind a tunnel such as `cloudflared tunnel --url http://localhost:3000` or ngrok, and set `PUBLIC_URL` to the tunnel's address.
+
+On Android and desktop Chrome, the notification has **Approve** and **Deny** buttons. iPhone doesn't support notification buttons, so tapping the notification opens the app. Purchases that need Face ID always open the app.
+
+## Face ID approvals
+
+Go to **Agents → Set up Face ID**. Once a passkey is set up, risky purchases always need it, and you can also require it over an amount. Passkeys are tied to the server's address, so set `PUBLIC_URL` to the exact URL you open the app at.
 
 ## Cards
 
@@ -80,13 +118,18 @@ Owner endpoints use `Authorization: Bearer <owner token>`:
 
 - `GET/POST /api/agents`, `PATCH /api/agents/:id`
 - `GET /api/requests?status=pending`, `POST /api/requests/:id/approve`, `POST /api/requests/:id/deny`
-- `GET /api/events` (activity log), `GET /api/stream` (live updates over SSE)
+- `GET /api/events` (activity log), `GET /api/insights`, `GET /api/stream` (live updates over SSE)
+- `GET/PATCH /api/settings`, `POST /api/passkeys/register/options`, `POST /api/passkeys/register/verify`, `POST /api/requests/:id/approve/options`
+
+The full agent API is described in [`public/openapi.json`](public/openapi.json), which is also served at `/openapi.json`.
 
 ## How the rules work
 
-The checks run in this order, and the first one that fails blocks the purchase: agent paused → blocked store → category not allowed → over the per-purchase cap → over the remaining monthly budget. If none fail, the purchase is auto-approved when it's at or under the auto-approve limit; otherwise it waits for you. When you tap Approve, the rules run again, so a budget you lowered in the meantime still applies. Unanswered requests expire after 15 minutes.
+The rule checks run in this order, and the first one that fails blocks the purchase: agent paused → blocked store → category not allowed → over the per-purchase cap → over the remaining monthly budget. If none fail, the purchase is auto-approved when it's at or under the auto-approve limit; otherwise it waits for you. When you tap Approve, the rules run again, so a budget you lowered in the meantime still applies. Unanswered requests expire after 15 minutes.
 
-The logic lives in [`src/rules.ts`](src/rules.ts) as one pure function.
+Risk checks run alongside the rules, in [`src/risk.ts`](src/risk.ts). They never block a purchase on their own. Instead they make sure you see it, with the warning, and that big ones need Face ID.
+
+Both are pure functions, so they're easy to test and change.
 
 ## Development
 
@@ -99,6 +142,8 @@ npm run dev       # restart on changes
 | File | What's in it |
 | --- | --- |
 | `src/rules.ts` | Rules engine |
+| `src/risk.ts` | Scam and anomaly checks |
+| `src/passkeys.ts` | Face ID / fingerprint approvals |
 | `src/wallet.ts` | Agents, requests, approvals, cards, activity log |
 | `src/cards.ts` | Mock and Lithic card issuers |
 | `src/app.ts` | HTTP API |
@@ -109,6 +154,7 @@ npm run dev       # restart on changes
 ## Next steps
 
 - Lithic webhooks for real charge events, and merchant-locked cards
-- A native Expo app with Face ID approval
+- Price checks before you approve ("this is $20 cheaper elsewhere")
+- Require Face ID to change rules, not just to approve
 - Multiple users with real sign-in
 - Signed approvals that work with Google AP2, Visa Intelligent Commerce and Mastercard Agent Pay

@@ -1,9 +1,13 @@
 import { Hono, type Context, type Next } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { getSetting, setSetting } from "./db.js";
 import { hashKey, type Agent, type Card, type PurchaseRequest, type Wallet, WalletError } from "./wallet.js";
 import type { Notifier, WalletEvent } from "./notify.js";
 import { formatUsd } from "./rules.js";
+import { hasHighRisk } from "./risk.js";
+import type { Passkeys } from "./passkeys.js";
 
 type Env = { Variables: { agent: Agent } };
 
@@ -49,6 +53,7 @@ function agentView(request: PurchaseRequest, card?: Card) {
     merchant: request.merchant,
     decision_reason: request.decisionReason,
     expires_at: request.expiresAt,
+    risk_flags: request.riskFlags.length ? request.riskFlags : undefined,
     message: messages[request.status],
     card: usable
       ? {
@@ -68,8 +73,40 @@ function bearer(c: Context): string | undefined {
   return h?.startsWith("Bearer ") ? h.slice(7).trim() : undefined;
 }
 
-export function createApp(opts: { wallet: Wallet; notifier: Notifier; ownerTokenHash: string; enableDemoCharge?: boolean }) {
-  const { wallet, notifier, ownerTokenHash } = opts;
+export function createApp(opts: {
+  wallet: Wallet;
+  notifier: Notifier;
+  passkeys: Passkeys;
+  ownerTokenHash: string;
+  enableDemoCharge?: boolean;
+}) {
+  const { wallet, notifier, passkeys, ownerTokenHash } = opts;
+  const needsPasskey = (r: PurchaseRequest) => passkeys.isRequired(r.amountCents, hasHighRisk(r.riskFlags));
+
+  // Quick tokens let a notification approve or deny one request without the owner token.
+  let actionSecret = getSetting(wallet.db, "action_secret");
+  if (!actionSecret) {
+    actionSecret = randomBytes(32).toString("hex");
+    setSetting(wallet.db, "action_secret", actionSecret);
+  }
+  const quickToken = (requestId: string) => createHmac("sha256", actionSecret).update(requestId).digest("base64url");
+  const quickTokenValid = (requestId: string, token: string) => {
+    const expected = Buffer.from(quickToken(requestId));
+    const given = Buffer.from(token);
+    return given.length === expected.length && timingSafeEqual(given, expected);
+  };
+
+  const notifyPending = (r: PurchaseRequest) => {
+    const what = `${r.agentName} wants ${formatUsd(r.amountCents)} at ${r.merchant}`;
+    const warning = r.riskFlags.find((f) => f.level === "high");
+    return notifier.push({
+      title: warning ? "⚠️ Risky purchase request" : "Approve purchase?",
+      body: warning ? `${what}. ${warning.message}` : `${what}: ${r.reason}`,
+      requestId: r.id,
+      // Purchases that need Face ID must be opened in the app instead.
+      quickToken: needsPasskey(r) ? undefined : quickToken(r.id),
+    });
+  };
   const app = new Hono<Env>();
 
   app.onError((err, c) => {
@@ -116,6 +153,7 @@ export function createApp(opts: { wallet: Wallet; notifier: Notifier; ownerToken
       category: body.category,
       reason: body.reason,
     });
+    if (request.status === "pending") void notifyPending(request);
     return c.json(agentView(request, card), request.status === "blocked" ? 403 : 201);
   });
 
@@ -133,6 +171,18 @@ export function createApp(opts: { wallet: Wallet; notifier: Notifier; ownerToken
       return c.json(result, result.ok ? 200 : 402);
     });
   }
+
+  // ---------- one-tap decisions from a notification ----------
+
+  app.post("/quick/:id", async (c) => {
+    const id = c.req.param("id");
+    const body = z.object({ decision: z.enum(["approve", "deny"]), token: z.string() }).parse(await c.req.json());
+    if (!quickTokenValid(id, body.token)) return c.json({ error: "Invalid link." }, 401);
+    const request = wallet.getRequest(id);
+    if (body.decision === "deny") return c.json({ request: wallet.deny(id) });
+    if (needsPasskey(request)) return c.json({ error: "Open the app to approve with Face ID.", passkeyRequired: true }, 403);
+    return c.json(await wallet.approve(id));
+  });
 
   // ---------- owner API (Bearer = owner token) ----------
 
@@ -157,10 +207,49 @@ export function createApp(opts: { wallet: Wallet; notifier: Notifier; ownerToken
 
   app.get("/api/requests", (c) => {
     const status = c.req.query("status") as PurchaseRequest["status"] | undefined;
-    return c.json(wallet.listRequests({ status }));
+    return c.json(wallet.listRequests({ status }).map((r) => ({ ...r, needsPasskey: r.status === "pending" && needsPasskey(r) })));
   });
 
-  app.post("/api/requests/:id/approve", async (c) => c.json(await wallet.approve(c.req.param("id"))));
+  app.post("/api/requests/:id/approve/options", async (c) => {
+    const id = c.req.param("id");
+    wallet.getRequest(id); // 404 if it doesn't exist
+    return c.json(await passkeys.authenticationOptions(`approve:${id}`));
+  });
+
+  app.post("/api/requests/:id/approve", async (c) => {
+    const id = c.req.param("id");
+    const request = wallet.getRequest(id);
+    if (request.status === "pending" && needsPasskey(request)) {
+      const body = (await c.req.json().catch(() => ({}))) as { passkey?: any };
+      if (!body.passkey || !(await passkeys.verifyAuthentication(`approve:${id}`, body.passkey))) {
+        return c.json({ error: "Confirm with Face ID or your fingerprint to approve this one.", passkeyRequired: true }, 403);
+      }
+    }
+    return c.json(await wallet.approve(id));
+  });
+
+  // ---------- passkeys and settings ----------
+
+  app.get("/api/settings", (c) =>
+    c.json({ passkeyCount: passkeys.count(), passkeyRequiredOverCents: passkeys.requiredOverCents ?? null }),
+  );
+
+  app.patch("/api/settings", async (c) => {
+    const body = z.object({ passkeyRequiredOverCents: cents.nullable() }).parse(await c.req.json());
+    if (body.passkeyRequiredOverCents !== null && passkeys.count() === 0) {
+      throw new WalletError("Set up Face ID or a fingerprint first.");
+    }
+    passkeys.requiredOverCents = body.passkeyRequiredOverCents ?? undefined;
+    return c.json({ passkeyCount: passkeys.count(), passkeyRequiredOverCents: passkeys.requiredOverCents ?? null });
+  });
+
+  app.post("/api/passkeys/register/options", async (c) => c.json(await passkeys.registrationOptions()));
+
+  app.post("/api/passkeys/register/verify", async (c) => {
+    const ok = await passkeys.verifyRegistration(await c.req.json());
+    if (!ok) throw new WalletError("Couldn't verify that passkey. Try again.");
+    return c.json({ ok: true, passkeyCount: passkeys.count() }, 201);
+  });
 
   app.post("/api/requests/:id/deny", async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as { note?: string };
@@ -168,6 +257,8 @@ export function createApp(opts: { wallet: Wallet; notifier: Notifier; ownerToken
   });
 
   app.get("/api/events", (c) => c.json(wallet.listEvents()));
+
+  app.get("/api/insights", (c) => c.json(wallet.insights()));
 
   app.get("/api/push/key", (c) => c.json({ publicKey: notifier.vapidPublicKey }));
 

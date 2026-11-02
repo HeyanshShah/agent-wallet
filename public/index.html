@@ -35,6 +35,7 @@
     <nav>
       <button data-tab="approvals" class="active">Approvals <span id="pending-count" class="badge" hidden></span></button>
       <button data-tab="agents">Agents</button>
+      <button data-tab="insights">Insights</button>
       <button data-tab="activity">Activity</button>
     </nav>
 
@@ -45,6 +46,7 @@
     </section>
 
     <section id="tab-agents" class="tab" hidden>
+      <div id="security" class="card"></div>
       <div id="agent-list"></div>
       <details id="new-agent">
         <summary class="primary-btn">Add an agent</summary>
@@ -63,12 +65,17 @@
       <div id="new-key" class="card highlight" hidden></div>
     </section>
 
+    <section id="tab-insights" class="tab" hidden>
+      <div id="insights"></div>
+    </section>
+
     <section id="tab-activity" class="tab" hidden>
       <ul id="event-list" class="events"></ul>
     </section>
   </div>
 
   <div id="toast" class="toast" hidden></div>
+  <script src="/vendor/simplewebauthn.js"></script>
   <script src="/app.js" type="module"></script>
 </body>
 </html>

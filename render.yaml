@@ -1,0 +1,20 @@
+# One-click deploy on Render: https://render.com/deploy?repo=https://github.com/HeyanshShah/agent-wallet
+services:
+  - type: web
+    name: agent-wallet
+    runtime: docker
+    plan: starter
+    healthCheckPath: /health
+    disk:
+      name: wallet-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: OWNER_TOKEN
+        generateValue: true
+      - key: PUBLIC_URL
+        sync: false
+      - key: CARD_ISSUER
+        value: mock
+      - key: VAPID_SUBJECT
+        value: mailto:you@example.com

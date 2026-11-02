@@ -54,6 +54,10 @@ button { font: inherit; cursor: pointer; }
 .request .amount { font-size: 2rem; font-weight: 700; letter-spacing: -0.02em; }
 .request .merchant { font-weight: 600; }
 .request .reason { margin: 10px 0 14px; }
+.flag { font-size: 0.9rem; border-radius: 10px; padding: 8px 10px; margin: -4px 0 12px; }
+.flag.high { background: color-mix(in srgb, var(--bad) 14%, transparent); color: var(--bad); font-weight: 600; }
+.flag.medium { background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn); }
+.flag.info { color: var(--muted); padding: 0; }
 .request .actions { display: flex; gap: 10px; }
 .request .meta { font-size: 0.85rem; color: var(--muted); }
 .empty { text-align: center; color: var(--muted); padding: 32px 0; }
@@ -88,3 +92,20 @@ pre { background: var(--bg); border: 1px solid var(--border); border-radius: 10p
 .signin-box form { display: grid; gap: 10px; margin-top: 16px; }
 
 .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 12px 18px; border-radius: 12px; max-width: calc(100% - 32px); box-shadow: 0 8px 24px rgb(0 0 0 / 0.2); }
+
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.stat .big { font-size: 1.6rem; font-weight: 700; letter-spacing: -0.02em; }
+.stat .good { color: var(--good); }
+.flag-card { font-weight: 600; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.chips span { background: var(--bg); border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px; font-size: 0.85rem; }
+.hbar { margin-top: 12px; }
+.hbar-label { display: flex; justify-content: space-between; font-size: 0.9rem; margin-bottom: 4px; }
+.hbar-track { height: 8px; background: var(--border); border-radius: 999px; overflow: hidden; }
+.hbar-track > div { height: 100%; background: var(--accent); border-radius: 999px; }
+.vbars { display: flex; gap: 8px; align-items: end; height: 120px; margin-top: 12px; }
+.vbar { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; }
+.vbar-col { flex: 1; width: 100%; display: flex; align-items: end; }
+.vbar-col > div { width: 100%; background: var(--accent); border-radius: 6px 6px 0 0; min-height: 2px; }
+.vbar span { font-size: 0.75rem; color: var(--muted); }
+nav button { padding: 8px 4px; font-size: 0.92rem; }

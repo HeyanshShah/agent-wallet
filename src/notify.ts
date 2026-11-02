@@ -46,7 +46,13 @@ export class Notifier {
       .run(sub.endpoint, JSON.stringify(sub), new Date().toISOString());
   }
 
-  async push(payload: { title: string; body: string; requestId?: string }): Promise<void> {
+  async push(payload: {
+    title: string;
+    body: string;
+    requestId?: string;
+    /** Lets the phone approve or deny straight from the notification. */
+    quickToken?: string;
+  }): Promise<void> {
     if (!this.pushEnabled) return;
     const rows = this.db.prepare("SELECT endpoint, subscription FROM push_subscriptions").all() as {
       endpoint: string;

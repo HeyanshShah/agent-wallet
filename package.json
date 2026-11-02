@@ -1,6 +1,6 @@
 {
   "name": "agent-wallet",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Spending rules, phone approvals and one-time cards for AI agents",
   "scripts": {
     "dev": "tsx watch src/server.ts",
@@ -13,14 +13,16 @@
   "dependencies": {
     "@hono/node-server": "^2.1.5",
     "@modelcontextprotocol/sdk": "^1.32.2",
+    "@simplewebauthn/browser": "^14.0.0",
+    "@simplewebauthn/server": "^14.0.3",
     "hono": "^4.13.14",
+    "tsx": "^4.23.15",
     "web-push": "^3.6.7",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",
     "@types/web-push": "^3.6.4",
-    "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5"
   },
@@ -28,5 +30,16 @@
   "type": "module",
   "engines": {
     "node": ">=22.13"
-  }
+  },
+  "bin": {
+    "agent-wallet": "bin/agent-wallet.mjs",
+    "agent-wallet-mcp": "bin/agent-wallet-mcp.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "public",
+    "README.md",
+    ".env.example"
+  ]
 }

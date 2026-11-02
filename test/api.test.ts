@@ -4,6 +4,7 @@ import { MockIssuer } from "../src/cards.js";
 import { Notifier } from "../src/notify.js";
 import { Wallet, hashKey } from "../src/wallet.js";
 import { createApp } from "../src/app.js";
+import { Passkeys } from "../src/passkeys.js";
 
 const OWNER = "owner-test-token";
 
@@ -11,14 +12,15 @@ function setup() {
   const db = openDb(":memory:");
   const notifier = new Notifier(db, { enablePush: false });
   const wallet = new Wallet(db, new MockIssuer(), notifier, 15);
-  const app = createApp({ wallet, notifier, ownerTokenHash: hashKey(OWNER), enableDemoCharge: true });
+  const passkeys = new Passkeys(db, { rpID: "localhost", rpName: "Agent Wallet", origin: "http://localhost:3000" });
+  const app = createApp({ wallet, notifier, passkeys, ownerTokenHash: hashKey(OWNER), enableDemoCharge: true });
   const req = (method: string, path: string, token: string, body?: unknown) =>
     app.request(path, {
       method,
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: body ? JSON.stringify(body) : undefined,
     });
-  return { db, wallet, req };
+  return { db, wallet, passkeys, notifier, req };
 }
 
 let t: ReturnType<typeof setup>;
@@ -136,6 +138,77 @@ describe("purchase flow", () => {
     t.db.prepare("UPDATE purchase_requests SET expires_at = ? WHERE id = ?").run("2000-01-01T00:00:00.000Z", created.id);
     const polled = await (await t.req("GET", `/v1/purchases/${created.id}`, agentKey)).json();
     expect(polled.status).toBe("expired");
+  });
+
+  it("never auto-approves a risky purchase, and tells the agent why", async () => {
+    const res = await t.req("POST", "/v1/purchases", agentKey, { amount_cents: 999, merchant: "amaz0n-deals.com", reason: "Cheap charger" });
+    const body = await res.json();
+    expect(body.status).toBe("pending");
+    expect(body.card).toBeUndefined();
+    expect(body.risk_flags[0].code).toBe("lookalike_merchant");
+    const pending = await (await t.req("GET", "/api/requests?status=pending", OWNER)).json();
+    expect(pending[0].riskFlags[0].level).toBe("high");
+  });
+
+  it("requires a passkey for big or risky approvals once one is set up", async () => {
+    // Can't require passkeys before registering one.
+    expect((await t.req("PATCH", "/api/settings", OWNER, { passkeyRequiredOverCents: 5_000 })).status).toBe(400);
+
+    // Pretend a passkey is registered (real registration needs a browser; covered by the e2e check).
+    t.db.prepare("INSERT INTO passkeys (id, public_key, counter, created_at) VALUES ('cred', 'AA==', 0, '2026-01-01')").run();
+    expect((await t.req("PATCH", "/api/settings", OWNER, { passkeyRequiredOverCents: 5_000 })).status).toBe(200);
+
+    const small = await (await buy(4_000)).json();
+    const big = await (await buy(8_000)).json();
+    const listed = await (await t.req("GET", "/api/requests?status=pending", OWNER)).json();
+    expect(listed.find((r: any) => r.id === big.id).needsPasskey).toBe(true);
+    expect(listed.find((r: any) => r.id === small.id).needsPasskey).toBe(false);
+
+    const blocked = await t.req("POST", `/api/requests/${big.id}/approve`, OWNER);
+    expect(blocked.status).toBe(403);
+    expect((await blocked.json()).passkeyRequired).toBe(true);
+    const fake = await t.req("POST", `/api/requests/${big.id}/approve`, OWNER, { passkey: { id: "cred", response: {} } });
+    expect(fake.status).toBe(403);
+
+    expect((await t.req("POST", `/api/requests/${small.id}/approve`, OWNER)).status).toBe(200);
+    // Denying never needs a passkey.
+    expect((await t.req("POST", `/api/requests/${big.id}/deny`, OWNER)).status).toBe(200);
+  });
+
+  it("approves and denies from a notification with a per-request token", async () => {
+    const pushes: any[] = [];
+    (t as any).notifier.push = async (p: any) => void pushes.push(p);
+    const a = await (await buy(8_000)).json();
+    const b = await (await buy(7_000)).json();
+    const tokenA = pushes.find((p) => p.requestId === a.id).quickToken;
+    const tokenB = pushes.find((p) => p.requestId === b.id).quickToken;
+    const quick = (id: string, decision: string, token: string) =>
+      t.req("POST", `/quick/${id}`, "", { decision, token });
+
+    expect((await quick(a.id, "approve", tokenB)).status).toBe(401); // token is bound to one request
+    expect((await quick(a.id, "approve", tokenA)).status).toBe(200);
+    expect((await (await t.req("GET", `/v1/purchases/${a.id}`, agentKey)).json()).status).toBe("approved");
+    expect((await quick(b.id, "deny", tokenB)).status).toBe(200);
+    expect((await quick(b.id, "deny", tokenB)).status).toBe(409); // already decided
+  });
+
+  it("summarizes spending in insights", async () => {
+    await buy(2_000, "Amazon");
+    const big = await (await t.req("POST", "/v1/purchases", agentKey, { amount_cents: 9_000, merchant: "Best Buy", category: "electronics", reason: "x" })).json();
+    await t.req("POST", `/api/requests/${big.id}/approve`, OWNER);
+    await buy(99_999); // blocked
+    const scam = await (await buy(1_000, "paypa1.com")).json();
+    await t.req("POST", `/api/requests/${scam.id}/deny`, OWNER);
+
+    const ins = await (await t.req("GET", "/api/insights", OWNER)).json();
+    expect(ins.spentCents).toBe(11_000);
+    expect(ins.stoppedCents).toBe(100_999);
+    expect(ins.riskyStopped).toBe(1);
+    expect(ins.counts).toMatchObject({ autoApproved: 1, approved: 1, blocked: 1, denied: 1 });
+    expect(ins.byCategory[0]).toEqual({ label: "electronics", cents: 9_000 });
+    expect(ins.topMerchants.map((m: any) => m.label)).toEqual(["Best Buy", "Amazon"]);
+    expect(ins.months).toHaveLength(6);
+    expect(ins.months.at(-1).cents).toBe(11_000);
   });
 
   it("writes everything to the activity log", async () => {

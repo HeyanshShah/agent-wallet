@@ -3,6 +3,7 @@ import type { Db } from "./db.js";
 import type { CardIssuer } from "./cards.js";
 import type { Notifier } from "./notify.js";
 import { type AgentRules, evaluate, formatUsd } from "./rules.js";
+import { type RiskFlag, type PastPurchase, assessRisk, hasHighRisk } from "./risk.js";
 
 export type RequestStatus = "pending" | "approved" | "auto_approved" | "denied" | "blocked" | "expired" | "completed";
 
@@ -39,6 +40,7 @@ export interface PurchaseRequest {
   createdAt: string;
   decidedAt: string | null;
   expiresAt: string | null;
+  riskFlags: RiskFlag[];
 }
 
 export class WalletError extends Error {
@@ -82,6 +84,7 @@ function rowToRequest(r: any): PurchaseRequest {
     createdAt: r.created_at,
     decidedAt: r.decided_at,
     expiresAt: r.expires_at,
+    riskFlags: JSON.parse(r.risk_flags ?? "[]"),
   };
 }
 
@@ -205,6 +208,79 @@ export class Wallet {
     return row.total;
   }
 
+  /** Recent purchases that went through or are waiting, for risk checks. */
+  private recentPurchases(agentId: string): PastPurchase[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT amount_cents, merchant, created_at FROM purchase_requests
+           WHERE agent_id = ? AND status IN ('pending', ${SPENT_STATUSES.map(() => "?").join(",")})
+           ORDER BY created_at DESC LIMIT 50`,
+        )
+        .all(agentId, ...SPENT_STATUSES) as any[]
+    ).map((r) => ({ amountCents: r.amount_cents, merchant: r.merchant, createdAt: r.created_at }));
+  }
+
+  // ---------- insights ----------
+
+  insights(at = new Date()) {
+    const monthStart = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), 1)).toISOString();
+    const spent = `status IN (${SPENT_STATUSES.map((x) => `'${x}'`).join(",")})`;
+    const q = (sql: string, ...args: (string | number)[]) => this.db.prepare(sql).all(...args) as any[];
+
+    const counts = Object.fromEntries(
+      q("SELECT status, COUNT(*) AS n FROM purchase_requests WHERE created_at >= ? GROUP BY status", monthStart).map((r) => [r.status, r.n]),
+    );
+    const sum = (where: string) =>
+      (this.db.prepare(`SELECT COALESCE(SUM(amount_cents), 0) AS c FROM purchase_requests WHERE created_at >= ? AND ${where}`).get(monthStart) as { c: number }).c;
+
+    const sixMonthsAgo = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth() - 5, 1)).toISOString();
+    const byMonth = new Map(
+      q(`SELECT substr(created_at, 1, 7) AS month, SUM(amount_cents) AS cents FROM purchase_requests WHERE ${spent} AND created_at >= ? GROUP BY month`, sixMonthsAgo).map(
+        (r) => [r.month, r.cents],
+      ),
+    );
+    const months = Array.from({ length: 6 }, (_, i) => {
+      const d = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth() - 5 + i, 1));
+      const month = d.toISOString().slice(0, 7);
+      return { month, cents: byMonth.get(month) ?? 0 };
+    });
+
+    return {
+      month: monthStart.slice(0, 7),
+      spentCents: sum(spent),
+      stoppedCents: sum("status IN ('blocked', 'denied')"),
+      riskyStopped: q(
+        `SELECT COUNT(*) AS n FROM purchase_requests WHERE created_at >= ? AND status IN ('blocked', 'denied', 'expired') AND risk_flags LIKE '%"high"%'`,
+        monthStart,
+      )[0].n as number,
+      counts: {
+        autoApproved: counts.auto_approved ?? 0,
+        approved: (counts.approved ?? 0) + (counts.completed ?? 0),
+        denied: counts.denied ?? 0,
+        blocked: counts.blocked ?? 0,
+        expired: counts.expired ?? 0,
+        pending: counts.pending ?? 0,
+      },
+      byAgent: q(
+        `SELECT a.name AS label, SUM(r.amount_cents) AS cents FROM purchase_requests r JOIN agents a ON a.id = r.agent_id
+         WHERE r.${spent} AND r.created_at >= ? GROUP BY a.id ORDER BY cents DESC`,
+        monthStart,
+      ),
+      byCategory: q(
+        `SELECT COALESCE(category, 'Other') AS label, SUM(amount_cents) AS cents FROM purchase_requests
+         WHERE ${spent} AND created_at >= ? GROUP BY label ORDER BY cents DESC`,
+        monthStart,
+      ),
+      topMerchants: q(
+        `SELECT merchant AS label, SUM(amount_cents) AS cents, COUNT(*) AS purchases FROM purchase_requests
+         WHERE ${spent} AND created_at >= ? GROUP BY lower(merchant) ORDER BY cents DESC LIMIT 5`,
+        monthStart,
+      ),
+      months,
+    };
+  }
+
   // ---------- purchase requests ----------
 
   private expireStale(): void {
@@ -265,7 +341,12 @@ export class Wallet {
     if (!merchant) throw new WalletError("merchant is required.");
     if (!reason) throw new WalletError("reason is required.");
 
-    const decision = evaluate(agent, { ...input, merchant }, this.spentThisMonth(agent.id));
+    let decision = evaluate(agent, { ...input, merchant }, this.spentThisMonth(agent.id));
+    const risk = assessRisk({ amountCents: input.amountCents, merchant, reason }, this.recentPurchases(agent.id));
+    // A risky purchase is never approved automatically, however small.
+    if (decision.outcome === "auto_approve" && hasHighRisk(risk)) {
+      decision = { outcome: "ask", reason: "Needs your approval: it was flagged as risky." };
+    }
     const id = randomUUID();
     const created = now();
     const status: RequestStatus =
@@ -275,8 +356,8 @@ export class Wallet {
 
     this.db
       .prepare(
-        `INSERT INTO purchase_requests (id, agent_id, amount_cents, merchant, category, reason, status, decision_reason, created_at, decided_at, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO purchase_requests (id, agent_id, amount_cents, merchant, category, reason, status, decision_reason, created_at, decided_at, expires_at, risk_flags)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -290,6 +371,7 @@ export class Wallet {
         created,
         status === "pending" ? null : created,
         expiresAt,
+        JSON.stringify(risk),
       );
 
     const what = `${agent.name} wants ${formatUsd(input.amountCents)} at ${merchant}`;
@@ -299,7 +381,6 @@ export class Wallet {
     }
     if (status === "pending") {
       this.log("request_pending", `Approval needed: ${what}.`, { agentId: agent.id, requestId: id });
-      void this.notifier.push({ title: "Approve purchase?", body: `${what}: ${reason}`, requestId: id });
       return { request: this.getRequest(id) };
     }
     this.log("request_auto_approved", `Auto-approved: ${what}.`, { agentId: agent.id, requestId: id });
