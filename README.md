@@ -26,6 +26,8 @@ What makes it different:
 - **Price checks.** Before you tap Approve, it looks up the same product elsewhere: "💰 $72 cheaper at Target." The agent sees it too, so if you deny, it can buy it there instead.
 - **Face ID approvals.** With a passkey set up, risky purchases and anything over an amount you choose need Face ID or your fingerprint. A stolen password alone can't approve them.
 - **One-tap from the notification.** On Android and desktop, approve or deny right from the push notification without opening the app.
+- **Signed approvals.** Every approved purchase comes with a token signed by your wallet that says who approved what, for how much, and how (automatically, by tap, or with Face ID). Any store, bank or payment network can check it against your wallet's public key, without trusting the agent.
+- **Built for real money.** Card numbers are encrypted in the database and deleted once used, real charges arrive through signed Lithic webhooks, the activity log is tamper-evident, and with Face ID set up, nobody can loosen your rules with just your password.
 - **Insights.** See spending by agent, category and store, the last 6 months, and how much money your rules stopped.
 - **Works with any agent.** One-line install for Claude and any MCP client, plus an OpenAPI spec for everything else. See [docs/INTEGRATE.md](docs/INTEGRATE.md).
 
@@ -118,14 +120,40 @@ The SerpApi integration is tested against a recorded response shape, not a live 
 
 Go to **Agents → Set up Face ID**. Once a passkey is set up, risky purchases always need it, and you can also require it over an amount. Passkeys are tied to the server's address, so set `PUBLIC_URL` to the exact URL you open the app at.
 
-## Cards
+## Real cards
 
 | `CARD_ISSUER` | What happens |
 | --- | --- |
 | `mock` (default) | Fake, Luhn-valid test cards. No money moves. `POST /v1/cards/:id/charge` pretends to be a store charging the card |
-| `lithic` | Real virtual cards from [Lithic](https://lithic.com). Use the sandbox key and `LITHIC_BASE_URL=https://sandbox.lithic.com` first. Cards are `SINGLE_USE` with a per-transaction limit equal to the approved amount |
+| `lithic` | Real virtual cards from [Lithic](https://lithic.com). Cards are `SINGLE_USE` with a per-transaction limit equal to the approved amount, so the card network itself refuses a second charge or a bigger one |
 
-> **Before real money:** the Lithic connector has not been tested against a live account yet, and card numbers are stored in the local database for convenience. Before going live, stop storing card numbers (fetch them from Lithic when needed), add Lithic webhooks to record charges, and put the server behind HTTPS.
+To go live with Lithic:
+
+1. Get a sandbox API key, and set `CARD_ISSUER=lithic`, `LITHIC_API_KEY` and `LITHIC_BASE_URL=https://sandbox.lithic.com`.
+2. In Lithic's dashboard, add a webhook to `https://your-wallet/webhooks/lithic` for card transaction events, and set `LITHIC_WEBHOOK_SECRET` to its signing secret (`whsec_...`). Every delivery's signature and timestamp are checked, and a charge delivered twice is only counted once. If a used card is ever charged again, you get an alert in Activity.
+3. Make a test purchase, then switch to the production key and `LITHIC_BASE_URL=https://api.lithic.com`.
+
+> The Lithic connector and webhook handler are tested against Lithic's documented request and event formats, not yet against a live account. Run step 3 in the sandbox before real money.
+
+## Security
+
+- **Card details are encrypted at rest** with AES-256-GCM. The key comes from `WALLET_ENCRYPTION_KEY` (Render generates one), or from a `wallet.key` file created next to the database. A copied database is useless without it, so keep the key somewhere else and back it up. Card numbers are deleted as soon as the card is used.
+- **Face ID locks your rules.** Once a passkey is set up, raising a budget, adding an agent or switching off Face ID checks needs Face ID too, so a stolen owner token can't loosen anything. Pausing an agent never needs it.
+- **Tamper-evident log.** Each Activity entry includes a hash of the one before. The Activity tab checks the whole chain and warns if anything was edited or removed (`GET /api/events/verify`).
+- **Abuse limits.** Repeated wrong keys from one address are slowed down, each agent can make 30 purchase requests a minute, and request bodies over 64 KB are refused. Security headers are on, and token checks are constant-time.
+
+Found a security problem? Please report it privately; see [CONTRIBUTING.md](CONTRIBUTING.md#security).
+
+## Signed approvals
+
+Approved purchases include `approval_token`, a compact JWS signed with the wallet's Ed25519 key:
+
+```json
+{ "iss": "https://your-wallet", "sub": "<agent id>", "jti": "<request id>", "amount": { "value": 8900, "currency": "USD" },
+  "merchant": "Best Buy", "approval": "owner_passkey", "risk": ["new_merchant"], "card_last4": "4242", "iat": 1793000000, "exp": 1793086400 }
+```
+
+`approval` is `auto`, `owner` (a tap) or `owner_passkey` (Face ID). Anyone can check a token against `/.well-known/jwks.json`, or send it to `POST /verify`. `verifyApproval()` in [`src/signer.ts`](src/signer.ts) has no other dependencies, so a store can copy it.
 
 ## API
 
@@ -139,8 +167,10 @@ Owner endpoints use `Authorization: Bearer <owner token>`:
 
 - `GET/POST /api/agents`, `PATCH /api/agents/:id`
 - `GET /api/requests?status=pending`, `POST /api/requests/:id/approve`, `POST /api/requests/:id/deny`
-- `GET /api/events` (activity log), `GET /api/insights`, `GET /api/stream` (live updates over SSE)
-- `GET/PATCH /api/settings`, `POST /api/passkeys/register/options`, `POST /api/passkeys/register/verify`, `POST /api/requests/:id/approve/options`
+- `GET /api/events` (activity log), `GET /api/events/verify`, `GET /api/insights`, `GET /api/stream` (live updates over SSE)
+- `GET/PATCH /api/settings`, `POST /api/passkeys/register/options`, `POST /api/passkeys/register/verify`, `POST /api/requests/:id/approve/options`, `POST /api/passkeys/rules/options`
+
+Public: `GET /.well-known/agent-spend`, `GET /.well-known/jwks.json`, `POST /verify`, and `POST /webhooks/lithic` (signed by Lithic).
 
 The full agent API is described in [`public/openapi.json`](public/openapi.json), which is also served at `/openapi.json`.
 
@@ -154,12 +184,12 @@ Both are pure functions, so they're easy to test and change.
 
 ## The Agent Spend Protocol
 
-Agent Wallet implements an open draft standard for how agents ask wallets for money: [docs/AGENT-SPEND-PROTOCOL.md](docs/AGENT-SPEND-PROTOCOL.md). A wallet publishes `/.well-known/agent-spend`, and agents send one request shape and handle seven statuses. Retries are safe with an `Idempotency-Key` header. The protocol is rail-neutral: the credential can be a virtual card today, and network tokens or signed mandates later. Feedback is welcome as issues.
+Agent Wallet implements an open draft standard for how agents ask wallets for money: [docs/AGENT-SPEND-PROTOCOL.md](docs/AGENT-SPEND-PROTOCOL.md). A wallet publishes `/.well-known/agent-spend`, and agents send one request shape and handle seven statuses. Retries are safe with an `Idempotency-Key` header. Draft 0.2 adds signed approvals that anyone can verify. The protocol is rail-neutral: the credential can be a virtual card today, and network tokens later. Feedback is welcome as issues.
 
 ## Development
 
 ```bash
-npm test          # rules + API tests
+npm test          # rules, risk, prices, API and security tests
 npm run typecheck
 npm run dev       # restart on changes
 ```
@@ -169,6 +199,9 @@ npm run dev       # restart on changes
 | `src/rules.ts` | Rules engine |
 | `src/risk.ts` | Scam and anomaly checks |
 | `src/passkeys.ts` | Face ID / fingerprint approvals |
+| `src/signer.ts` | Signed approvals and their verifier |
+| `src/vault.ts` | Encryption of card details at rest |
+| `src/lithic-webhooks.ts` | Real charges from Lithic |
 | `src/prices.ts` | Price checks |
 | `src/wallet.ts` | Agents, requests, approvals, cards, activity log |
 | `src/cards.ts` | Mock and Lithic card issuers |
@@ -183,10 +216,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Good first issues: new scam patterns, ne
 
 ## Next steps
 
-- Lithic webhooks for real charge events, and merchant-locked cards
-- Require Face ID to change rules, not just to approve
-- Multiple users with real sign-in
-- Signed approvals that work with Google AP2, Visa Intelligent Commerce and Mastercard Agent Pay
+- Merchant-locked cards, so a card only works at the approved store
+- Multiple users and families with real sign-in
+- A native iPhone app with notification buttons
+- Approval tokens mapped onto Google AP2 mandates, Visa Intelligent Commerce and Mastercard Agent Pay
 
 ## License
 

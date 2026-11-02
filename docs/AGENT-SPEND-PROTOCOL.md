@@ -1,4 +1,4 @@
-# Agent Spend Protocol (draft 0.1)
+# Agent Spend Protocol (draft 0.2)
 
 An open, vendor-neutral way for an AI agent to ask a person's wallet for money, and for the wallet to answer with a decision and a payment credential.
 
@@ -23,13 +23,17 @@ A wallet publishes `GET /.well-known/agent-spend`:
 ```json
 {
   "protocol": "agent-spend",
-  "version": "0.1",
+  "version": "0.2",
+  "issuer": "https://wallet.example",
   "purchases_endpoint": "https://wallet.example/v1/purchases",
   "limits_endpoint": "https://wallet.example/v1/me",
   "openapi": "https://wallet.example/openapi.json",
+  "jwks_uri": "https://wallet.example/.well-known/jwks.json",
+  "verify_endpoint": "https://wallet.example/verify",
   "auth": ["bearer"],
   "credential_types": ["one_time_card"],
-  "features": ["risk_flags", "price_check", "idempotency", "owner_approval", "passkey_approval"]
+  "approval_token_type": "agent-spend-approval+jwt",
+  "features": ["risk_flags", "price_check", "idempotency", "owner_approval", "passkey_approval", "signed_approvals"]
 }
 ```
 
@@ -84,11 +88,32 @@ Every response has the same shape, and `status` says what happens next:
   "risk_flags": [{ "level": "info", "code": "new_merchant", "message": "First purchase at Best Buy." }],
   "cheaper_option": { "merchant": "Target", "price": "$72.98", "savings": "$16.02" },
   "message": "Approved. Use the one-time card below for this purchase only.",
+  "approval_token": "eyJhbGciOiJFZERTQSIs…",
   "card": { "number": "4000…", "cvv": "123", "exp_month": 11, "exp_year": 2027, "limit": "$89.00" }
 }
 ```
 
-In draft 0.1 the credential is the `card` object (type `one_time_card`). Draft 0.2 will generalize it to `credential: { type, ... }`, so wallets can return network tokens or signed mandates instead.
+The credential is the `card` object (type `one_time_card`). A later draft will generalize it to `credential: { type, ... }`, so wallets can return network tokens instead.
+
+## Signed approvals (new in 0.2)
+
+An approved response includes `approval_token`: a compact JWS with header `{ "alg": "EdDSA", "typ": "agent-spend-approval+jwt", "kid": "…" }`, signed with an Ed25519 key published at `jwks_uri`. Its claims:
+
+| Claim | Meaning |
+| --- | --- |
+| `iss` | The wallet's `issuer` |
+| `sub` | The agent the money was approved for |
+| `jti` | The purchase request id |
+| `amount` | `{ "value": <cents>, "currency": "USD" }`, the most that was approved |
+| `merchant` | The store it was approved for |
+| `approval` | `auto` (within the owner's rules), `owner` (the owner tapped Approve) or `owner_passkey` (the owner approved with a passkey) |
+| `risk` | Risk codes the owner was shown, if any |
+| `card_last4` | Last four digits of the one-time card, so the payment can be matched to the approval |
+| `iat`, `exp` | Issued and expiry times (seconds). Wallets should keep `exp` within 24 hours |
+
+This lets a party that doesn't trust the agent, such as a store, a bank or a payment network, check that a real person's wallet approved this exact purchase, and how strongly. Verifiers must check the signature, `typ`, `exp`, and that `amount` and `merchant` match the payment. Wallets should also offer `POST {verify_endpoint}` with `{ "token": "…" }`, answering `{ "valid": true, "claims": {…} }` or `{ "valid": false, "error": "…" }`.
+
+The claims deliberately mirror what card network agent programs and Google AP2 mandates carry (who, how much, where, and proof of user presence), so a wallet can translate one into the other.
 
 ### Risk flags
 
@@ -110,6 +135,8 @@ Codes defined so far: `lookalike_merchant`, `scam_pattern`, `duplicate`, `unusua
 4. **The owner sees what the agent wrote.** The `reason` is shown verbatim, never rewritten.
 5. **Everything is logged** and visible to the owner.
 6. **Strong approval for big amounts.** Wallets should support passkey (WebAuthn) confirmation for large or risky approvals, bound to the specific request.
+7. **Rules are protected as strongly as approvals.** If approving needs a passkey, so does loosening the rules. Pausing an agent must stay one step.
+8. **Payment details are protected at rest** and deleted once a credential can no longer be used.
 
 ## Limits
 
@@ -121,9 +148,12 @@ Codes defined so far: `lookalike_merchant`, `scam_pattern`, `duplicate`, `unusua
 
 ## Status
 
-This is a draft. Feedback is welcome as issues on [github.com/HeyanshShah/agent-wallet](https://github.com/HeyanshShah/agent-wallet). Planned for 0.2:
+This is a draft. Feedback is welcome as issues on [github.com/HeyanshShah/agent-wallet](https://github.com/HeyanshShah/agent-wallet).
+
+Changes in 0.2: signed approvals (`approval_token`, `jwks_uri`, `verify_endpoint`) and wallet requirements 7 and 8. Fully compatible with 0.1 agents, which can ignore the new fields.
+
+Planned for 0.3:
 
 - Generalized `credential` types: `network_token`, `ap2_mandate`, `stablecoin`
-- Signed responses, so a merchant can verify the owner approved
-- Webhooks instead of polling
+- Webhooks to agents instead of polling
 - Multi-currency amounts

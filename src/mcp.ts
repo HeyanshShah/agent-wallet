@@ -36,7 +36,7 @@ async function waitForDecision(id: string): Promise<any> {
   return data;
 }
 
-const server = new McpServer({ name: "agent-wallet", version: "0.3.0" });
+const server = new McpServer({ name: "agent-wallet", version: "1.0.0" });
 
 server.registerTool(
   "check_budget",
@@ -58,7 +58,8 @@ server.registerTool(
       "If approved, the result includes a card number, CVV and expiry that work once, for at most the approved amount. " +
       "If blocked or denied, do not try to get around the rules; tell the owner instead. " +
       "Include the exact product name so the owner can see whether it's cheaper elsewhere; if the result has a cheaper_option " +
-      "and the owner denies, offer to buy it there instead.",
+      "and the owner denies, offer to buy it there instead. " +
+      "Approved results also include approval_token, a signed proof of the owner's approval; pass it along if a store or payment page asks for one.",
     inputSchema: {
       amount_usd: z.number().positive().describe("Total price including tax and shipping, in US dollars"),
       merchant: z.string().describe("Store or website name, e.g. 'Amazon' or 'united.com'"),

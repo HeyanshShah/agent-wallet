@@ -102,6 +102,19 @@ function migrate(db: Db): void {
       "UPDATE purchase_requests SET auto_approved = 1 WHERE status = 'auto_approved' OR (status = 'completed' AND decision_reason LIKE 'Under the%auto-approve limit.')",
     );
   }
+  if (!has("purchase_requests", "approved_with")) {
+    // How the money was approved: auto, owner (a tap) or owner_passkey (Face ID). Goes into signed approvals.
+    db.exec("ALTER TABLE purchase_requests ADD COLUMN approved_with TEXT");
+    db.exec("UPDATE purchase_requests SET approved_with = CASE WHEN auto_approved = 1 THEN 'auto' ELSE 'owner' END WHERE status IN ('approved', 'auto_approved', 'completed')");
+  }
+  if (!has("cards", "charge_token")) {
+    // The card network's id for the charge, so a webhook delivered twice is only counted once.
+    db.exec("ALTER TABLE cards ADD COLUMN charge_token TEXT");
+  }
+  if (!has("events", "hash")) {
+    // Each entry's hash covers the one before it, so editing or deleting history is detectable.
+    db.exec("ALTER TABLE events ADD COLUMN hash TEXT");
+  }
 }
 
 export function getSetting(db: Db, key: string): string | undefined {

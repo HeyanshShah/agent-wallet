@@ -64,6 +64,10 @@ const res = await fetch(`${WALLET}/v1/purchases`, {
 const purchase = await res.json(); // status: auto_approved | pending | blocked
 ```
 
+## Proving the approval to a store
+
+Approved responses include `approval_token`, a signed statement from the owner's wallet of what was approved and how. If a store or payment page asks for proof that a person approved the purchase, give it this token. The store checks it against the wallet's public key at `/.well-known/jwks.json`, or by posting it to `/verify`. See [Signed approvals](AGENT-SPEND-PROTOCOL.md#signed-approvals-new-in-02).
+
 ## Rules for agents
 
 - Never retry a `blocked` or `denied` purchase with a different amount or store to get around the owner's rules.
