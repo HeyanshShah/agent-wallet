@@ -1,6 +1,8 @@
 import { Hono, type Context, type Next } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { getSetting, setSetting } from "./db.js";
 import { hashKey, type Agent, type Card, type PurchaseRequest, type Wallet, WalletError } from "./wallet.js";
 import type { Notifier, WalletEvent } from "./notify.js";
 import { formatUsd } from "./rules.js";
@@ -80,6 +82,31 @@ export function createApp(opts: {
 }) {
   const { wallet, notifier, passkeys, ownerTokenHash } = opts;
   const needsPasskey = (r: PurchaseRequest) => passkeys.isRequired(r.amountCents, hasHighRisk(r.riskFlags));
+
+  // Quick tokens let a notification approve or deny one request without the owner token.
+  let actionSecret = getSetting(wallet.db, "action_secret");
+  if (!actionSecret) {
+    actionSecret = randomBytes(32).toString("hex");
+    setSetting(wallet.db, "action_secret", actionSecret);
+  }
+  const quickToken = (requestId: string) => createHmac("sha256", actionSecret).update(requestId).digest("base64url");
+  const quickTokenValid = (requestId: string, token: string) => {
+    const expected = Buffer.from(quickToken(requestId));
+    const given = Buffer.from(token);
+    return given.length === expected.length && timingSafeEqual(given, expected);
+  };
+
+  const notifyPending = (r: PurchaseRequest) => {
+    const what = `${r.agentName} wants ${formatUsd(r.amountCents)} at ${r.merchant}`;
+    const warning = r.riskFlags.find((f) => f.level === "high");
+    return notifier.push({
+      title: warning ? "⚠️ Risky purchase request" : "Approve purchase?",
+      body: warning ? `${what}. ${warning.message}` : `${what}: ${r.reason}`,
+      requestId: r.id,
+      // Purchases that need Face ID must be opened in the app instead.
+      quickToken: needsPasskey(r) ? undefined : quickToken(r.id),
+    });
+  };
   const app = new Hono<Env>();
 
   app.onError((err, c) => {
@@ -126,6 +153,7 @@ export function createApp(opts: {
       category: body.category,
       reason: body.reason,
     });
+    if (request.status === "pending") void notifyPending(request);
     return c.json(agentView(request, card), request.status === "blocked" ? 403 : 201);
   });
 
@@ -143,6 +171,18 @@ export function createApp(opts: {
       return c.json(result, result.ok ? 200 : 402);
     });
   }
+
+  // ---------- one-tap decisions from a notification ----------
+
+  app.post("/quick/:id", async (c) => {
+    const id = c.req.param("id");
+    const body = z.object({ decision: z.enum(["approve", "deny"]), token: z.string() }).parse(await c.req.json());
+    if (!quickTokenValid(id, body.token)) return c.json({ error: "Invalid link." }, 401);
+    const request = wallet.getRequest(id);
+    if (body.decision === "deny") return c.json({ request: wallet.deny(id) });
+    if (needsPasskey(request)) return c.json({ error: "Open the app to approve with Face ID.", passkeyRequired: true }, 403);
+    return c.json(await wallet.approve(id));
+  });
 
   // ---------- owner API (Bearer = owner token) ----------
 

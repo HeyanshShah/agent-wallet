@@ -321,12 +321,6 @@ export class Wallet {
     }
     if (status === "pending") {
       this.log("request_pending", `Approval needed: ${what}.`, { agentId: agent.id, requestId: id });
-      const warning = risk.find((f) => f.level === "high");
-      void this.notifier.push({
-        title: warning ? "⚠️ Risky purchase request" : "Approve purchase?",
-        body: warning ? `${what}. ${warning.message}` : `${what}: ${reason}`,
-        requestId: id,
-      });
       return { request: this.getRequest(id) };
     }
     this.log("request_auto_approved", `Auto-approved: ${what}.`, { agentId: agent.id, requestId: id });

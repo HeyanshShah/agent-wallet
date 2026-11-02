@@ -20,7 +20,7 @@ function setup() {
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: body ? JSON.stringify(body) : undefined,
     });
-  return { db, wallet, passkeys, req };
+  return { db, wallet, passkeys, notifier, req };
 }
 
 let t: ReturnType<typeof setup>;
@@ -173,6 +173,23 @@ describe("purchase flow", () => {
     expect((await t.req("POST", `/api/requests/${small.id}/approve`, OWNER)).status).toBe(200);
     // Denying never needs a passkey.
     expect((await t.req("POST", `/api/requests/${big.id}/deny`, OWNER)).status).toBe(200);
+  });
+
+  it("approves and denies from a notification with a per-request token", async () => {
+    const pushes: any[] = [];
+    (t as any).notifier.push = async (p: any) => void pushes.push(p);
+    const a = await (await buy(8_000)).json();
+    const b = await (await buy(7_000)).json();
+    const tokenA = pushes.find((p) => p.requestId === a.id).quickToken;
+    const tokenB = pushes.find((p) => p.requestId === b.id).quickToken;
+    const quick = (id: string, decision: string, token: string) =>
+      t.req("POST", `/quick/${id}`, "", { decision, token });
+
+    expect((await quick(a.id, "approve", tokenB)).status).toBe(401); // token is bound to one request
+    expect((await quick(a.id, "approve", tokenA)).status).toBe(200);
+    expect((await (await t.req("GET", `/v1/purchases/${a.id}`, agentKey)).json()).status).toBe("approved");
+    expect((await quick(b.id, "deny", tokenB)).status).toBe(200);
+    expect((await quick(b.id, "deny", tokenB)).status).toBe(409); // already decided
   });
 
   it("writes everything to the activity log", async () => {
