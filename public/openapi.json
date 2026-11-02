@@ -2,16 +2,31 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Agent Wallet agent API",
-    "version": "0.3.0",
+    "version": "1.0.0",
     "description": "Lets an AI agent ask its owner for money. Small purchases are approved instantly, bigger ones wait for the owner's tap, and anything that breaks the owner's rules is blocked. Approved purchases come with a one-time card."
   },
-  "security": [{ "agentKey": [] }],
+  "security": [
+    {
+      "agentKey": []
+    }
+  ],
   "paths": {
     "/v1/me": {
       "get": {
         "summary": "Your spending rules and remaining budget",
         "operationId": "getLimits",
-        "responses": { "200": { "description": "Limits", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Limits" } } } } }
+        "responses": {
+          "200": {
+            "description": "Limits",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Limits"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/v1/purchases": {
@@ -20,11 +35,35 @@
         "operationId": "requestPurchase",
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PurchaseInput" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PurchaseInput"
+              }
+            }
+          }
         },
         "responses": {
-          "201": { "description": "Approved (with card) or waiting for the owner", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Purchase" } } } },
-          "403": { "description": "Blocked by the owner's rules", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Purchase" } } } }
+          "201": {
+            "description": "Approved (with card) or waiting for the owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Purchase"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Blocked by the owner's rules",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Purchase"
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -32,44 +71,179 @@
       "get": {
         "summary": "Check a purchase request (poll while pending)",
         "operationId": "getPurchase",
-        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "responses": { "200": { "description": "The request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Purchase" } } } } }
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Purchase"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/verify": {
+      "post": {
+        "summary": "Check a signed approval (public, no key needed)",
+        "operationId": "verifyApproval",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "token"
+                ],
+                "properties": {
+                  "token": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "{ valid: true, claims } or { valid: false, error }"
+          }
+        }
+      }
+    },
+    "/.well-known/jwks.json": {
+      "get": {
+        "summary": "Public keys that sign approvals",
+        "operationId": "getJwks",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "JWK set (Ed25519)"
+          }
+        }
       }
     }
   },
   "components": {
-    "securitySchemes": { "agentKey": { "type": "http", "scheme": "bearer", "description": "The agent key from the approval app (starts with aw_agent_)" } },
+    "securitySchemes": {
+      "agentKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "The agent key from the approval app (starts with aw_agent_)"
+      }
+    },
     "schemas": {
       "PurchaseInput": {
         "type": "object",
-        "required": ["amount_cents", "merchant", "reason"],
+        "required": [
+          "amount_cents",
+          "merchant",
+          "reason"
+        ],
         "properties": {
-          "amount_cents": { "type": "integer", "minimum": 1, "description": "Total price in US cents, including tax and shipping" },
-          "merchant": { "type": "string", "description": "Store or website name" },
-          "category": { "type": "string", "description": "e.g. travel, groceries, electronics" },
-          "reason": { "type": "string", "description": "One sentence the owner will read" },
-          "product": { "type": "string", "description": "Exact product name and model, used to check prices elsewhere" },
-          "product_url": { "type": "string", "format": "uri" }
+          "amount_cents": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Total price in US cents, including tax and shipping"
+          },
+          "merchant": {
+            "type": "string",
+            "description": "Store or website name"
+          },
+          "category": {
+            "type": "string",
+            "description": "e.g. travel, groceries, electronics"
+          },
+          "reason": {
+            "type": "string",
+            "description": "One sentence the owner will read"
+          },
+          "product": {
+            "type": "string",
+            "description": "Exact product name and model, used to check prices elsewhere"
+          },
+          "product_url": {
+            "type": "string",
+            "format": "uri"
+          }
         }
       },
       "Purchase": {
         "type": "object",
         "properties": {
-          "id": { "type": "string" },
-          "status": { "type": "string", "enum": ["pending", "approved", "auto_approved", "denied", "blocked", "expired", "completed"] },
-          "amount": { "type": "string", "examples": ["$19.99"] },
-          "amount_cents": { "type": "integer" },
-          "merchant": { "type": "string" },
-          "decision_reason": { "type": ["string", "null"] },
-          "expires_at": { "type": ["string", "null"], "format": "date-time" },
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "auto_approved",
+              "denied",
+              "blocked",
+              "expired",
+              "completed"
+            ]
+          },
+          "amount": {
+            "type": "string",
+            "examples": [
+              "$19.99"
+            ]
+          },
+          "amount_cents": {
+            "type": "integer"
+          },
+          "merchant": {
+            "type": "string"
+          },
+          "decision_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
           "risk_flags": {
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
-                "level": { "type": "string", "enum": ["high", "medium", "info"] },
-                "code": { "type": "string" },
-                "message": { "type": "string" }
+                "level": {
+                  "type": "string",
+                  "enum": [
+                    "high",
+                    "medium",
+                    "info"
+                  ]
+                },
+                "code": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                }
               }
             }
           },
@@ -77,39 +251,95 @@
             "type": "object",
             "description": "Present when the same product was found noticeably cheaper elsewhere",
             "properties": {
-              "merchant": { "type": "string" },
-              "price": { "type": "string" },
-              "savings": { "type": "string" },
-              "url": { "type": "string" },
-              "demo": { "type": "boolean", "description": "True when prices are made up (demo mode)" }
+              "merchant": {
+                "type": "string"
+              },
+              "price": {
+                "type": "string"
+              },
+              "savings": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "demo": {
+                "type": "boolean",
+                "description": "True when prices are made up (demo mode)"
+              }
             }
           },
-          "message": { "type": "string", "description": "What the agent should do next" },
+          "message": {
+            "type": "string",
+            "description": "What the agent should do next"
+          },
           "card": {
             "type": "object",
             "description": "Present only while approved and unused. Works once, for at most the approved amount.",
             "properties": {
-              "id": { "type": "string" },
-              "number": { "type": "string" },
-              "cvv": { "type": "string" },
-              "exp_month": { "type": "integer" },
-              "exp_year": { "type": "integer" },
-              "limit": { "type": "string" }
+              "id": {
+                "type": "string"
+              },
+              "number": {
+                "type": "string"
+              },
+              "cvv": {
+                "type": "string"
+              },
+              "exp_month": {
+                "type": "integer"
+              },
+              "exp_year": {
+                "type": "integer"
+              },
+              "limit": {
+                "type": "string"
+              }
             }
+          },
+          "approval_token": {
+            "type": "string",
+            "description": "Present once approved. A compact JWS (EdDSA, typ agent-spend-approval+jwt) signed by the wallet, stating the agent, amount, merchant and how it was approved. Verify with /.well-known/jwks.json or POST /verify."
           }
         }
       },
       "Limits": {
         "type": "object",
         "properties": {
-          "name": { "type": "string" },
-          "active": { "type": "boolean" },
-          "monthly_budget": { "type": "string" },
-          "spent_this_month": { "type": "string" },
-          "remaining_this_month": { "type": "string" },
-          "per_purchase_cap": { "type": "string" },
-          "auto_approve_up_to": { "type": "string" },
-          "allowed_categories": { "oneOf": [{ "type": "array", "items": { "type": "string" } }, { "const": "any" }] }
+          "name": {
+            "type": "string"
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "monthly_budget": {
+            "type": "string"
+          },
+          "spent_this_month": {
+            "type": "string"
+          },
+          "remaining_this_month": {
+            "type": "string"
+          },
+          "per_purchase_cap": {
+            "type": "string"
+          },
+          "auto_approve_up_to": {
+            "type": "string"
+          },
+          "allowed_categories": {
+            "oneOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "const": "any"
+              }
+            ]
+          }
         }
       }
     }

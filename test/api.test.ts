@@ -9,12 +9,12 @@ import { DemoLookup, type PriceLookup } from "../src/prices.js";
 
 const OWNER = "owner-test-token";
 
-function setup(priceLookup?: PriceLookup) {
+function setup(priceLookup?: PriceLookup, extra: { lithicWebhookSecret?: string } = {}) {
   const db = openDb(":memory:");
   const notifier = new Notifier(db, { enablePush: false });
   const wallet = new Wallet(db, new MockIssuer(), notifier, 15, priceLookup);
   const passkeys = new Passkeys(db, { rpID: "localhost", rpName: "Agent Wallet", origin: "http://localhost:3000" });
-  const app = createApp({ wallet, notifier, passkeys, ownerTokenHash: hashKey(OWNER), enableDemoCharge: true });
+  const app = createApp({ wallet, notifier, passkeys, ownerTokenHash: hashKey(OWNER), enableDemoCharge: true, ...extra });
   const req = (method: string, path: string, token: string, body?: unknown) =>
     app.request(path, {
       method,
@@ -157,6 +157,17 @@ describe("purchase flow", () => {
 
     // Pretend a passkey is registered (real registration needs a browser; covered by the e2e check).
     t.db.prepare("INSERT INTO passkeys (id, public_key, counter, created_at) VALUES ('cred', 'AA==', 0, '2026-01-01')").run();
+    // With a passkey, changing rules or settings needs one too. Pausing an agent never does.
+    const locked = await t.req("PATCH", "/api/settings", OWNER, { passkeyRequiredOverCents: 5_000 });
+    expect(locked.status).toBe(403);
+    expect((await locked.json()).passkeyRequired).toBe(true);
+    const agentId = t.wallet.listAgents()[0].id;
+    expect((await t.req("PATCH", `/api/agents/${agentId}`, OWNER, { autoApproveUnderCents: 99_999 })).status).toBe(403);
+    expect((await t.req("PATCH", `/api/agents/${agentId}`, OWNER, { active: false })).status).toBe(200);
+    expect((await t.req("PATCH", `/api/agents/${agentId}`, OWNER, { active: true })).status).toBe(403);
+    t.db.prepare("UPDATE agents SET active = 1").run();
+    // The fake passkey can't sign, so switch rules protection off directly to test approvals.
+    t.db.prepare("INSERT INTO settings (key, value) VALUES ('passkey_for_rules', '0')").run();
     expect((await t.req("PATCH", "/api/settings", OWNER, { passkeyRequiredOverCents: 5_000 })).status).toBe(200);
 
     const small = await (await buy(4_000)).json();
@@ -264,7 +275,7 @@ describe("purchase flow", () => {
 
   it("publishes a discovery document", async () => {
     const doc = await (await t.app.request("/.well-known/agent-spend")).json();
-    expect(doc).toMatchObject({ protocol: "agent-spend", version: "0.1", credential_types: ["one_time_card"] });
+    expect(doc).toMatchObject({ protocol: "agent-spend", version: "0.2", credential_types: ["one_time_card"] });
     expect(doc.purchases_endpoint).toMatch(/\/v1\/purchases$/);
   });
 

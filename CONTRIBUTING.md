@@ -25,7 +25,7 @@ Use `PRICE_CHECK=demo` to try price checks without an API key. `npm run demo` (w
 
 - Keep each one focused, and add tests for behavior changes. The rules, risk and price logic are pure functions, so they're easy to test.
 - CI runs the typecheck and the tests on every PR.
-- Never log or store real card numbers in new code. See the note under "Cards" in the README.
+- Never log real card numbers, and only store them through `Vault` (see "Security" in the README).
 
 ## Security
 

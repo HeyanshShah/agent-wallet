@@ -16,9 +16,23 @@ async function api(method, path, body) {
   });
   if (res.status === 401) { signOut(); throw new Error("Signed out"); }
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  if (!res.ok) throw Object.assign(new Error(data.error || `HTTP ${res.status}`), { data });
   return data;
 }
+
+// Rule changes need Face ID once it's set up. Try without, and ask for it only if the server says so.
+async function apiWithFaceId(method, path, body) {
+  try {
+    return await api(method, path, body);
+  } catch (err) {
+    if (!err.data?.passkeyRequired) throw err;
+    const optionsJSON = await api("POST", "/api/passkeys/rules/options");
+    const passkey = await SimpleWebAuthnBrowser.startAuthentication({ optionsJSON });
+    return api(method, path, { ...body, passkey });
+  }
+}
+
+const errorText = (err) => (err.name === "NotAllowedError" ? "Cancelled." : err.message);
 
 function toast(msg) {
   const el = $("#toast");
@@ -161,6 +175,19 @@ async function renderAgents() {
           <dt>Categories</dt><dd>${a.allowedCategories.length ? esc(a.allowedCategories.join(", ")) : "Any"}</dd>
           <dt>Blocked stores</dt><dd>${a.blockedMerchants.length ? esc(a.blockedMerchants.join(", ")) : "None"}</dd>
         </dl>
+        <details class="edit-rules">
+          <summary>Edit rules</summary>
+          <form data-edit="${a.id}">
+            <div class="row">
+              <label>Monthly budget ($) <input name="monthly" type="number" min="0" step="0.01" required value="${(a.monthlyBudgetCents / 100).toFixed(2)}"></label>
+              <label>Max per purchase ($) <input name="cap" type="number" min="0" step="0.01" required value="${(a.perPurchaseCapCents / 100).toFixed(2)}"></label>
+            </div>
+            <label>Auto-approve up to ($) <input name="auto" type="number" min="0" step="0.01" value="${(a.autoApproveUnderCents / 100).toFixed(2)}"></label>
+            <label>Allowed categories <input name="categories" value="${esc(a.allowedCategories.join(", "))}" placeholder="empty = any"></label>
+            <label>Blocked stores <input name="blocked" value="${esc(a.blockedMerchants.join(", "))}"></label>
+            <button type="submit" class="primary">Save rules</button>
+          </form>
+        </details>
       </div>`;
         })
         .join("")
@@ -170,15 +197,40 @@ async function renderAgents() {
 document.addEventListener("click", async (e) => {
   const id = e.target.dataset?.toggle;
   if (!id) return;
-  await api("PATCH", `/api/agents/${id}`, { active: e.target.dataset.active !== "true" });
+  try {
+    // Pausing never needs Face ID. Resuming is a rule change, so it may.
+    await apiWithFaceId("PATCH", `/api/agents/${id}`, { active: e.target.dataset.active !== "true" });
+  } catch (err) {
+    toast(errorText(err));
+  }
   refresh();
+});
+
+document.addEventListener("submit", async (e) => {
+  const id = e.target.dataset?.edit;
+  if (!id) return;
+  e.preventDefault();
+  const f = new FormData(e.target);
+  try {
+    await apiWithFaceId("PATCH", `/api/agents/${id}`, {
+      monthlyBudgetCents: toCents(f.get("monthly")),
+      perPurchaseCapCents: toCents(f.get("cap")),
+      autoApproveUnderCents: toCents(f.get("auto")),
+      allowedCategories: list(f.get("categories")),
+      blockedMerchants: list(f.get("blocked")),
+    });
+    toast("Rules saved.");
+    refresh();
+  } catch (err) {
+    toast(errorText(err));
+  }
 });
 
 $("#agent-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = new FormData(e.target);
   try {
-    const { agent, apiKey } = await api("POST", "/api/agents", {
+    const { agent, apiKey } = await apiWithFaceId("POST", "/api/agents", {
       name: f.get("name"),
       monthlyBudgetCents: toCents(f.get("monthly")),
       perPurchaseCapCents: toCents(f.get("cap")),
@@ -190,7 +242,7 @@ $("#agent-form").addEventListener("submit", async (e) => {
       mcpServers: {
         "agent-wallet": {
           command: "npx",
-          args: ["tsx", "/path/to/agent-wallet/src/mcp.ts"],
+          args: ["-y", "-p", "github:HeyanshShah/agent-wallet", "agent-wallet-mcp"],
           env: { WALLET_URL: location.origin, WALLET_AGENT_KEY: apiKey },
         },
       },
@@ -209,7 +261,7 @@ $("#agent-form").addEventListener("submit", async (e) => {
     $("#new-agent").open = false;
     refresh();
   } catch (err) {
-    toast(err.message);
+    toast(errorText(err));
   }
 });
 
@@ -225,6 +277,7 @@ async function renderSecurity() {
          <label>Also require it over ($)<input name="over" type="number" min="0" step="0.01" placeholder="Off" value="${on ? (s.passkeyRequiredOverCents / 100).toFixed(2) : ""}"></label>
          <button class="ghost" type="submit" style="margin-bottom:12px">Save</button>
        </form>
+       <label class="check"><input type="checkbox" id="rules-lock" ${s.passkeyForRules ? "checked" : ""}> Need Face ID to change rules or add agents</label>
        <button class="ghost" id="add-passkey">Add another device</button>`
     : `<strong>Face ID approvals</strong>
        <p class="muted">Make big or risky purchases need Face ID or your fingerprint, so a stolen password alone can't approve them.</p>
@@ -245,8 +298,21 @@ async function renderSecurity() {
     form.onsubmit = async (e) => {
       e.preventDefault();
       const v = new FormData(form).get("over");
-      await api("PATCH", "/api/settings", { passkeyRequiredOverCents: v === "" ? null : toCents(v) });
-      toast("Saved.");
+      try {
+        await apiWithFaceId("PATCH", "/api/settings", { passkeyRequiredOverCents: v === "" ? null : toCents(v) });
+        toast("Saved.");
+      } catch (err) {
+        toast(errorText(err));
+      }
+      renderSecurity();
+    };
+    $("#rules-lock").onchange = async (e) => {
+      try {
+        await apiWithFaceId("PATCH", "/api/settings", { passkeyForRules: e.target.checked });
+        toast(e.target.checked ? "Rule changes now need Face ID." : "Rule changes no longer need Face ID.");
+      } catch (err) {
+        toast(errorText(err));
+      }
       renderSecurity();
     };
   }
@@ -296,7 +362,11 @@ async function renderInsights() {
 // ---------- activity ----------
 
 async function renderActivity() {
-  const events = await api("GET", "/api/events");
+  const [events, check] = await Promise.all([api("GET", "/api/events"), api("GET", "/api/events/verify")]);
+  $("#log-check").className = `log-check ${check.ok ? "ok" : "bad"}`;
+  $("#log-check").textContent = check.ok
+    ? `✓ Log verified: all ${check.entries} entries are intact.`
+    : "⚠️ The activity log was changed outside the app. Entries from that point on can't be trusted.";
   $("#event-list").innerHTML = events.length
     ? events.map((ev) => `<li>${esc(ev.message)}<time>${when(ev.createdAt)}</time></li>`).join("")
     : `<li class="empty">Nothing yet.</li>`;

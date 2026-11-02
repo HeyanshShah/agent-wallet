@@ -5,6 +5,9 @@ import type { Notifier } from "./notify.js";
 import { type AgentRules, evaluate, formatUsd } from "./rules.js";
 import { type PriceCheck, type PriceLookup, comparePrices } from "./prices.js";
 import { type RiskFlag, type PastPurchase, assessRisk, hasHighRisk } from "./risk.js";
+import { Vault } from "./vault.js";
+import { ApprovalSigner, type ApprovalMethod } from "./signer.js";
+import type { CardCharge } from "./lithic-webhooks.js";
 
 export type RequestStatus = "pending" | "approved" | "auto_approved" | "denied" | "blocked" | "expired" | "completed";
 
@@ -45,6 +48,7 @@ export interface PurchaseRequest {
   product: string | null;
   productUrl: string | null;
   priceCheck: PriceCheck | null;
+  approvedWith: ApprovalMethod | null;
 }
 
 export class WalletError extends Error {
@@ -92,14 +96,15 @@ function rowToRequest(r: any): PurchaseRequest {
     product: r.product ?? null,
     productUrl: r.product_url ?? null,
     priceCheck: r.price_check ? JSON.parse(r.price_check) : null,
+    approvedWith: r.approved_with ?? null,
   };
 }
 
-function rowToCard(r: any): Card {
+function rowToCard(r: any, vault: Vault): Card {
   return {
     id: r.id,
-    pan: r.pan,
-    cvv: r.cvv,
+    pan: vault.decrypt(r.pan),
+    cvv: vault.decrypt(r.cvv),
     expMonth: r.exp_month,
     expYear: r.exp_year,
     last4: r.last4,
@@ -117,22 +122,68 @@ export interface NewAgentInput {
   blockedMerchants?: string[];
 }
 
+const eventHash = (prev: string, e: { agent_id: string | null; request_id: string | null; type: string; message: string; created_at: string }) =>
+  createHash("sha256").update(prev).update(JSON.stringify([e.agent_id, e.request_id, e.type, e.message, e.created_at])).digest("hex");
+
 export class Wallet {
+  readonly vault: Vault;
+  readonly signer: ApprovalSigner;
+
   constructor(
     readonly db: Db,
     private readonly issuer: CardIssuer,
     private readonly notifier: Notifier,
     private readonly approvalTimeoutMinutes = 15,
     private readonly priceLookup?: PriceLookup,
-  ) {}
+    opts: { vault?: Vault } = {},
+  ) {
+    this.vault = opts.vault ?? Vault.ephemeral();
+    this.signer = new ApprovalSigner(db, this.vault);
+    this.secureOldData();
+  }
+
+  /** Encrypts card details and chains log entries written by versions before 1.0. */
+  private secureOldData(): void {
+    const plain = this.db.prepare("SELECT id, pan, cvv FROM cards WHERE pan != '' AND pan NOT LIKE 'enc:%'").all() as any[];
+    for (const c of plain) {
+      this.db.prepare("UPDATE cards SET pan = ?, cvv = ? WHERE id = ?").run(this.vault.encrypt(c.pan), this.vault.encrypt(c.cvv), c.id);
+    }
+    // Cards that can't be used any more don't need their numbers.
+    this.db.prepare("UPDATE cards SET pan = '', cvv = '' WHERE state != 'open'").run();
+    const unchained = this.db.prepare("SELECT * FROM events WHERE hash IS NULL ORDER BY id").all() as any[];
+    if (!unchained.length) return;
+    let prev = (this.db.prepare("SELECT hash FROM events WHERE hash IS NOT NULL ORDER BY id DESC LIMIT 1").get() as any)?.hash ?? "";
+    for (const e of unchained) {
+      prev = eventHash(prev, e);
+      this.db.prepare("UPDATE events SET hash = ? WHERE id = ?").run(prev, e.id);
+    }
+  }
 
   // ---------- activity log ----------
 
   private log(type: string, message: string, ids: { agentId?: string; requestId?: string } = {}): void {
+    const prev = (this.db.prepare("SELECT hash FROM events ORDER BY id DESC LIMIT 1").get() as { hash: string } | undefined)?.hash ?? "";
+    const entry = { agent_id: ids.agentId ?? null, request_id: ids.requestId ?? null, type, message, created_at: now() };
     this.db
-      .prepare("INSERT INTO events (agent_id, request_id, type, message, created_at) VALUES (?, ?, ?, ?, ?)")
-      .run(ids.agentId ?? null, ids.requestId ?? null, type, message, now());
+      .prepare("INSERT INTO events (agent_id, request_id, type, message, created_at, hash) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(entry.agent_id, entry.request_id, type, message, entry.created_at, eventHash(prev, entry));
     this.notifier.emit({ type, message, ...ids });
+  }
+
+  /**
+   * Re-computes the hash chain over the whole activity log. Any edited, inserted or deleted entry
+   * (other than trimming the newest ones) breaks it. Pin `headHash` somewhere else to catch that too.
+   */
+  verifyLog(): { ok: boolean; entries: number; headHash: string | null; brokenAtId?: number } {
+    let prev = "";
+    let entries = 0;
+    for (const e of this.db.prepare("SELECT * FROM events ORDER BY id").iterate() as Iterable<any>) {
+      const expected = eventHash(prev, e);
+      if (e.hash !== expected) return { ok: false, entries, headHash: null, brokenAtId: e.id };
+      prev = expected;
+      entries++;
+    }
+    return { ok: true, entries, headHash: prev || null };
   }
 
   listEvents(limit = 100) {
@@ -342,7 +393,7 @@ export class Wallet {
 
   cardForRequest(requestId: string): Card | undefined {
     const row = this.db.prepare("SELECT * FROM cards WHERE request_id = ?").get(requestId);
-    return row ? rowToCard(row) : undefined;
+    return row ? rowToCard(row, this.vault) : undefined;
   }
 
   async requestPurchase(
@@ -384,8 +435,8 @@ export class Wallet {
 
     this.db
       .prepare(
-        `INSERT INTO purchase_requests (id, agent_id, amount_cents, merchant, category, reason, status, decision_reason, created_at, decided_at, expires_at, risk_flags, product, product_url, auto_approved, idempotency_key)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO purchase_requests (id, agent_id, amount_cents, merchant, category, reason, status, decision_reason, created_at, decided_at, expires_at, risk_flags, product, product_url, auto_approved, idempotency_key, approved_with)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -404,6 +455,7 @@ export class Wallet {
         input.productUrl?.trim() || null,
         status === "auto_approved" ? 1 : 0,
         input.idempotencyKey ?? null,
+        status === "auto_approved" ? "auto" : null,
       );
 
     const what = `${agent.name} wants ${formatUsd(input.amountCents)} at ${merchant}`;
@@ -433,8 +485,8 @@ export class Wallet {
         requestId,
         issued.provider,
         issued.providerCardId,
-        issued.pan,
-        issued.cvv,
+        this.vault.encrypt(issued.pan),
+        this.vault.encrypt(issued.cvv),
         issued.expMonth,
         issued.expYear,
         issued.last4,
@@ -470,7 +522,28 @@ export class Wallet {
     }
   }
 
-  async approve(requestId: string): Promise<{ request: PurchaseRequest; card?: Card }> {
+  /**
+   * A signed statement of who approved this purchase, for the agent to hand to a store or payment network.
+   * Only for purchases that were approved.
+   */
+  approvalToken(request: PurchaseRequest, issuer: string): string | undefined {
+    if (!request.approvedWith || !request.decidedAt || !["approved", "auto_approved", "completed"].includes(request.status)) return undefined;
+    const iat = Math.floor(Date.parse(request.decidedAt) / 1000);
+    return this.signer.sign({
+      iss: issuer,
+      sub: request.agentId,
+      jti: request.id,
+      iat,
+      exp: iat + 24 * 3600,
+      amount: { value: request.amountCents, currency: "USD" },
+      merchant: request.merchant,
+      approval: request.approvedWith,
+      risk: request.riskFlags.length ? request.riskFlags.map((f) => f.code) : undefined,
+      card_last4: this.cardForRequest(request.id)?.last4,
+    });
+  }
+
+  async approve(requestId: string, method: "owner" | "owner_passkey" = "owner"): Promise<{ request: PurchaseRequest; card?: Card }> {
     const request = this.getRequest(requestId);
     if (request.status !== "pending") throw new WalletError(`Request is already ${request.status}.`, 409);
 
@@ -487,7 +560,8 @@ export class Wallet {
       return { request: this.getRequest(requestId) };
     }
 
-    this.decide(requestId, "approved", "Approved by you.");
+    this.decide(requestId, "approved", method === "owner_passkey" ? "Approved by you with Face ID." : "Approved by you.");
+    this.db.prepare("UPDATE purchase_requests SET approved_with = ? WHERE id = ?").run(method, requestId);
     this.log("request_approved", `You approved ${formatUsd(request.amountCents)} at ${request.merchant}.`, { agentId: agent.id, requestId });
     const card = await this.issueCard(requestId, agent.name, request.amountCents, request.merchant);
     return { request: this.getRequest(requestId), card };
@@ -509,13 +583,12 @@ export class Wallet {
   }
 
   /**
-   * Records a charge on a one-time card. With the mock issuer this stands in for
-   * the store's payment; with Lithic it would be driven by transaction webhooks.
+   * Records a charge on a one-time card. With the mock issuer this stands in for the store's payment.
    */
   async recordCharge(cardId: string, amountCents: number, merchant: string): Promise<{ ok: boolean; reason: string }> {
     const row = this.db.prepare("SELECT * FROM cards WHERE id = ?").get(cardId) as any;
     if (!row) throw new WalletError("Card not found.", 404);
-    const card = rowToCard(row);
+    const card = rowToCard(row, this.vault);
     if (card.state !== "open") {
       this.log("charge_declined", `Declined a charge on card ending ${card.last4}: the card was already used.`, { requestId: row.request_id });
       return { ok: false, reason: "Card already used." };
@@ -524,10 +597,36 @@ export class Wallet {
       this.log("charge_declined", `Declined ${formatUsd(amountCents)} on card ending ${card.last4}: over its ${formatUsd(card.spendLimitCents)} limit.`, { requestId: row.request_id });
       return { ok: false, reason: "Over the card's limit." };
     }
-    this.db.prepare("UPDATE cards SET state = 'used' WHERE id = ?").run(cardId);
-    this.db.prepare("UPDATE purchase_requests SET status = 'completed', amount_cents = ? WHERE id = ?").run(amountCents, row.request_id);
-    await this.issuer.closeCard(row.provider_card_id);
-    this.log("charge_completed", `Paid ${formatUsd(amountCents)} at ${merchant} with card ending ${card.last4}.`, { requestId: row.request_id });
+    await this.completeCharge(row, amountCents, merchant, null);
     return { ok: true, reason: "Charged." };
+  }
+
+  /**
+   * Records a real charge reported by the card issuer (a Lithic webhook). The issuer already enforced
+   * the limit and single use, so this only books it. Safe to call twice for the same charge.
+   */
+  async recordNetworkCharge(charge: CardCharge): Promise<"recorded" | "duplicate" | "unknown_card" | "unexpected"> {
+    const row = this.db.prepare("SELECT * FROM cards WHERE provider_card_id = ?").get(charge.cardToken) as any;
+    if (!row) return "unknown_card";
+    if (row.charge_token === charge.transactionToken) return "duplicate";
+    if (row.state !== "open") {
+      // A single-use card should never be charged twice. Make sure the owner sees it.
+      this.log("charge_alert", `⚠️ ${charge.merchant} charged ${formatUsd(charge.amountCents)} to card ending ${row.last4}, which was already used. Check with your card issuer.`, { requestId: row.request_id });
+      return "unexpected";
+    }
+    await this.completeCharge(row, charge.amountCents, charge.merchant, charge.transactionToken);
+    return "recorded";
+  }
+
+  private async completeCharge(row: any, amountCents: number, merchant: string, chargeToken: string | null): Promise<void> {
+    // The card's number is no longer needed once it's used, so it's deleted.
+    this.db.prepare("UPDATE cards SET state = 'used', pan = '', cvv = '', charge_token = ? WHERE id = ?").run(chargeToken, row.id);
+    this.db.prepare("UPDATE purchase_requests SET status = 'completed', amount_cents = ? WHERE id = ?").run(amountCents, row.request_id);
+    try {
+      await this.issuer.closeCard(row.provider_card_id);
+    } catch (err: any) {
+      console.error("Couldn't close card:", err?.message ?? err);
+    }
+    this.log("charge_completed", `Paid ${formatUsd(amountCents)} at ${merchant} with card ending ${row.last4}.`, { requestId: row.request_id });
   }
 }
