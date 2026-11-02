@@ -21,7 +21,7 @@ self.addEventListener("push", (event) => {
 });
 
 async function decide(data, decision) {
-  const res = await fetch(`/quick/${data.requestId}`, {
+  const res = await fetch(`${data.base || ""}/quick/${data.requestId}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ decision, token: data.quickToken }),

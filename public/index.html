@@ -17,11 +17,23 @@
     <div class="signin-box">
       <img src="/icon.svg" alt="" width="56" height="56">
       <h1>Agent Wallet</h1>
-      <p class="muted">Paste the owner token the server printed the first time it started.</p>
-      <form id="signin-form">
-        <input id="token" type="password" placeholder="aw_owner_…" autocomplete="current-password" required>
-        <button type="submit" class="primary">Sign in</button>
-      </form>
+      <div id="token-signin" hidden>
+        <p class="muted">Paste the owner token the server printed the first time it started.</p>
+        <form id="signin-form">
+          <input id="token" type="password" placeholder="aw_owner_…" autocomplete="current-password" required>
+          <button type="submit" class="primary">Sign in</button>
+        </form>
+      </div>
+      <div id="account-signin" hidden>
+        <p class="muted" id="account-intro">Let AI agents shop for you, without handing them your card.</p>
+        <p id="early-access" class="early" hidden></p>
+        <form id="account-form">
+          <input name="email" type="email" placeholder="Email" autocomplete="email" required>
+          <input name="password" type="password" placeholder="Password (10+ characters)" autocomplete="current-password" minlength="10" required>
+          <button type="submit" class="primary" id="account-submit">Create free account</button>
+        </form>
+        <p class="muted switch"><span id="switch-text">Already have an account?</span> <a href="#" id="switch-mode">Sign in</a></p>
+      </div>
       <p id="signin-error" class="error" hidden></p>
     </div>
   </main>
@@ -46,6 +58,7 @@
     </section>
 
     <section id="tab-agents" class="tab" hidden>
+      <div id="account" class="card" hidden></div>
       <div id="security" class="card"></div>
       <div id="agent-list"></div>
       <details id="new-agent">

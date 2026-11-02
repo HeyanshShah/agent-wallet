@@ -51,6 +51,7 @@
     .compare th, .compare td { text-align: left; padding: 12px; border-bottom: 1px solid var(--border); }
     .compare td:not(:first-child), .compare th:not(:first-child) { text-align: center; }
     .yes { color: var(--good); font-weight: 700; } .no { color: var(--muted); }
+    .free-note { font-size: 15px !important; margin: 14px auto 0 !important; }
     footer { padding: 72px 0 40px; color: var(--muted); font-size: 15px; text-align: center; }
     @media (max-width: 600px) { .compare { font-size: 14px; } .compare th, .compare td { padding: 8px 6px; } }
   </style>
@@ -59,16 +60,17 @@
   <div class="wrap">
     <header>
       <a class="logo" href="#"><img src="media/icon.svg" width="32" height="32" alt="">Agent Wallet</a>
-      <a class="btn ghost" href="https://github.com/HeyanshShah/agent-wallet">GitHub</a>
+      <div class="cta"><a class="btn ghost" href="https://github.com/HeyanshShah/agent-wallet">GitHub</a><a class="btn primary" href="https://agent-wallet.onrender.com">Sign in</a></div>
     </header>
 
     <div class="hero">
       <h1>Let AI agents shop for you.<br>Without your card.</h1>
       <p>Spending rules, Face ID approvals, scam and price checks, and one-time cards for any AI agent. Open source. Set up in five minutes.</p>
       <div class="cta">
-        <a class="btn primary" href="https://github.com/HeyanshShah/agent-wallet#quick-start">Get started</a>
-        <a class="btn ghost" href="https://render.com/deploy?repo=https://github.com/HeyanshShah/agent-wallet">Deploy in one click</a>
+        <a class="btn primary" href="https://agent-wallet.onrender.com">Start free</a>
+        <a class="btn ghost" href="https://github.com/HeyanshShah/agent-wallet#self-host">Self-host it</a>
       </div>
+      <p class="free-note">Free during early access, until November 2027. No card needed.</p>
       <div class="video">
         <video src="media/demo.mp4" poster="media/poster.png" autoplay muted loop playsinline controls></video>
       </div>
@@ -129,6 +131,18 @@
           <tr><td>Open source, self-hostable</td><td class="yes">✓</td><td class="no">–</td><td class="no">–</td></tr>
         </tbody>
       </table>
+    </section>
+
+    <section>
+      <h2>Free while we're in early access</h2>
+      <div class="two">
+        <div class="card"><h3>Agent Wallet Cloud</h3><p><b style="font-size:28px;color:var(--text)">$0</b> until November 2027</p>
+          <p style="margin-top:10px">Every feature, unlimited agents, your own private wallet. Sign up with an email in 30 seconds.</p>
+          <p style="margin-top:16px"><a class="btn primary" href="https://agent-wallet.onrender.com">Start free</a></p></div>
+        <div class="card"><h3>Self-hosted</h3><p><b style="font-size:28px;color:var(--text)">$0</b> forever, MIT licensed</p>
+          <p style="margin-top:10px">Run it on your own server or laptop. Same features, your data never leaves your machine.</p>
+          <p style="margin-top:16px"><a class="btn ghost" href="https://github.com/HeyanshShah/agent-wallet#self-host">Self-host guide</a></p></div>
+      </div>
     </section>
 
     <footer>

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.0
+
+Agent Wallet Cloud: anyone can sign up.
+
+- **Hosted mode** (`HOSTED=1`): email and password accounts, one separate database per customer, agents routed by key, per-customer signing keys and public routes under `/t/<account>/`, one shared Lithic webhook routed by card, and account deletion.
+- **Free early access** until the `FREE_UNTIL` date, shown on the sign-up screen and in the app.
+- Push notifications now use per-wallet keys, so many wallets can share one server.
+- The landing page has a "Start free" sign-up button and an early-access section.
+
 ## 1.0.0
 
 Ready for real money.

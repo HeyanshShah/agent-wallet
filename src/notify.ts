@@ -14,10 +14,13 @@ export class Notifier {
   readonly bus = new EventEmitter();
   readonly vapidPublicKey: string;
   private readonly pushEnabled: boolean;
+  private readonly vapid: { subject: string; publicKey: string; privateKey: string };
+  /** Where this wallet's routes live, for notification buttons (empty, or /t/<account> when hosted). */
+  private readonly basePath: string;
 
   constructor(
     private readonly db: Db,
-    opts: { subject?: string; publicUrl?: string; enablePush?: boolean } = {},
+    opts: { subject?: string; publicUrl?: string; enablePush?: boolean; basePath?: string } = {},
   ) {
     this.bus.setMaxListeners(100);
     let pub = getSetting(db, "vapid_public");
@@ -31,7 +34,9 @@ export class Notifier {
     }
     this.vapidPublicKey = pub;
     this.pushEnabled = opts.enablePush ?? true;
-    webpush.setVapidDetails(opts.subject ?? "mailto:admin@example.com", pub, priv);
+    this.basePath = opts.basePath ?? "";
+    // Passed per send, not set globally, so several wallets can share one process.
+    this.vapid = { subject: opts.subject ?? "mailto:admin@example.com", publicKey: pub, privateKey: priv };
   }
 
   emit(event: WalletEvent): void {
@@ -61,7 +66,9 @@ export class Notifier {
     await Promise.all(
       rows.map(async (row) => {
         try {
-          await webpush.sendNotification(JSON.parse(row.subscription), JSON.stringify(payload));
+          await webpush.sendNotification(JSON.parse(row.subscription), JSON.stringify({ ...payload, base: this.basePath }), {
+            vapidDetails: this.vapid,
+          });
         } catch (err: any) {
           // 404/410 means the phone unsubscribed; forget it.
           if (err?.statusCode === 404 || err?.statusCode === 410) {

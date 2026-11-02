@@ -135,7 +135,13 @@ export class Wallet {
     private readonly notifier: Notifier,
     private readonly approvalTimeoutMinutes = 15,
     private readonly priceLookup?: PriceLookup,
-    opts: { vault?: Vault } = {},
+    private readonly opts: {
+      vault?: Vault;
+      /** Called with the issuer's card id, so a shared webhook can find the right wallet. */
+      onCardIssued?: (providerCardId: string) => void;
+      /** Called with the hash of each new agent key, so a shared server can route the agent to this wallet. */
+      onAgentCreated?: (keyHash: string) => void;
+    } = {},
   ) {
     this.vault = opts.vault ?? Vault.ephemeral();
     this.signer = new ApprovalSigner(db, this.vault);
@@ -213,6 +219,7 @@ export class Wallet {
         JSON.stringify(input.blockedMerchants ?? []),
         now(),
       );
+    this.opts.onAgentCreated?.(hashKey(apiKey));
     this.log("agent_created", `Added agent "${input.name}".`, { agentId: id });
     return { agent: this.getAgent(id), apiKey };
   }
@@ -493,6 +500,7 @@ export class Wallet {
         amountCents,
         now(),
       );
+    this.opts.onCardIssued?.(issued.providerCardId);
     this.log("card_issued", `One-time card ending ${issued.last4} issued for ${formatUsd(amountCents)} at ${merchant}.`, { requestId });
     return this.cardForRequest(requestId)!;
   }

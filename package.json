@@ -1,6 +1,6 @@
 {
   "name": "agent-wallet",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Spending rules, phone approvals and one-time cards for AI agents",
   "scripts": {
     "dev": "tsx watch src/server.ts",
