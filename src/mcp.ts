@@ -36,7 +36,7 @@ async function waitForDecision(id: string): Promise<any> {
   return data;
 }
 
-const server = new McpServer({ name: "agent-wallet", version: "0.2.0" });
+const server = new McpServer({ name: "agent-wallet", version: "0.3.0" });
 
 server.registerTool(
   "check_budget",
@@ -56,20 +56,29 @@ server.registerTool(
       "Ask the owner's wallet for a one-time card to pay for something. Small purchases may be approved instantly; " +
       "bigger ones wait for the owner to tap Approve on their phone (this tool waits for up to two minutes). " +
       "If approved, the result includes a card number, CVV and expiry that work once, for at most the approved amount. " +
-      "If blocked or denied, do not try to get around the rules; tell the owner instead.",
+      "If blocked or denied, do not try to get around the rules; tell the owner instead. " +
+      "Include the exact product name so the owner can see whether it's cheaper elsewhere; if the result has a cheaper_option " +
+      "and the owner denies, offer to buy it there instead.",
     inputSchema: {
       amount_usd: z.number().positive().describe("Total price including tax and shipping, in US dollars"),
       merchant: z.string().describe("Store or website name, e.g. 'Amazon' or 'united.com'"),
       category: z.string().optional().describe("Kind of purchase, e.g. travel, groceries, electronics, software"),
       reason: z.string().describe("One sentence the owner will read: what you are buying and why"),
+      product: z
+        .string()
+        .optional()
+        .describe("Exact product name and model, e.g. 'Sony WH-1000XM5 headphones'. Lets the owner see if it's cheaper elsewhere."),
+      product_url: z.string().optional().describe("Link to the product page"),
     },
   },
-  async ({ amount_usd, merchant, category, reason }) => {
+  async ({ amount_usd, merchant, category, reason, product, product_url }) => {
     const created = await call("POST", "/v1/purchases", {
       amount_cents: Math.round(amount_usd * 100),
       merchant,
       category,
       reason,
+      product,
+      product_url,
     });
     return text(created.status === "pending" ? await waitForDecision(created.id) : created);
   },

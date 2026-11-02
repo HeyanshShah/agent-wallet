@@ -5,13 +5,14 @@ import { Notifier } from "../src/notify.js";
 import { Wallet, hashKey } from "../src/wallet.js";
 import { createApp } from "../src/app.js";
 import { Passkeys } from "../src/passkeys.js";
+import { DemoLookup, type PriceLookup } from "../src/prices.js";
 
 const OWNER = "owner-test-token";
 
-function setup() {
+function setup(priceLookup?: PriceLookup) {
   const db = openDb(":memory:");
   const notifier = new Notifier(db, { enablePush: false });
-  const wallet = new Wallet(db, new MockIssuer(), notifier, 15);
+  const wallet = new Wallet(db, new MockIssuer(), notifier, 15, priceLookup);
   const passkeys = new Passkeys(db, { rpID: "localhost", rpName: "Agent Wallet", origin: "http://localhost:3000" });
   const app = createApp({ wallet, notifier, passkeys, ownerTokenHash: hashKey(OWNER), enableDemoCharge: true });
   const req = (method: string, path: string, token: string, body?: unknown) =>
@@ -209,6 +210,37 @@ describe("purchase flow", () => {
     expect(ins.topMerchants.map((m: any) => m.label)).toEqual(["Best Buy", "Amazon"]);
     expect(ins.months).toHaveLength(6);
     expect(ins.months.at(-1).cents).toBe(11_000);
+  });
+
+  it("checks prices before you approve and tells you and the agent", async () => {
+    const p = setup(new DemoLookup());
+    const pushes: any[] = [];
+    (p.notifier as any).push = async (x: any) => void pushes.push(x);
+    const { apiKey } = await (
+      await p.req("POST", "/api/agents", OWNER, { name: "A", monthlyBudgetCents: 100_000, perPurchaseCapCents: 50_000 })
+    ).json();
+    const created = await (
+      await p.req("POST", "/v1/purchases", apiKey, {
+        amount_cents: 39_999, merchant: "Best Buy", reason: "Headphones", product: "Sony WH-1000XM5", product_url: "https://bestbuy.com/x",
+      })
+    ).json();
+    await new Promise((r) => setTimeout(r, 50));
+    const polled = await (await p.req("GET", `/v1/purchases/${created.id}`, apiKey)).json();
+    expect(polled.cheaper_option).toMatchObject({ merchant: "Target", price: "$327.99", savings: "$72.00", demo: true });
+    expect(pushes[0].body).toContain("$72.00 cheaper at Target");
+    const listed = await (await p.req("GET", "/api/requests?status=pending", OWNER)).json();
+    expect(listed[0].priceCheck.cheaper.merchant).toBe("Target");
+    expect(listed[0].product).toBe("Sony WH-1000XM5");
+  });
+
+  it("skips price checks when there's no product name", async () => {
+    const p = setup(new DemoLookup());
+    const { apiKey } = await (
+      await p.req("POST", "/api/agents", OWNER, { name: "A", monthlyBudgetCents: 100_000, perPurchaseCapCents: 50_000 })
+    ).json();
+    const created = await (await p.req("POST", "/v1/purchases", apiKey, { amount_cents: 39_999, merchant: "Best Buy", reason: "x" })).json();
+    await new Promise((r) => setTimeout(r, 50));
+    expect((await (await p.req("GET", `/v1/purchases/${created.id}`, apiKey)).json()).cheaper_option).toBeUndefined();
   });
 
   it("writes everything to the activity log", async () => {

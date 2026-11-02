@@ -3,6 +3,7 @@ import type { Db } from "./db.js";
 import type { CardIssuer } from "./cards.js";
 import type { Notifier } from "./notify.js";
 import { type AgentRules, evaluate, formatUsd } from "./rules.js";
+import { type PriceCheck, type PriceLookup, comparePrices } from "./prices.js";
 import { type RiskFlag, type PastPurchase, assessRisk, hasHighRisk } from "./risk.js";
 
 export type RequestStatus = "pending" | "approved" | "auto_approved" | "denied" | "blocked" | "expired" | "completed";
@@ -41,6 +42,9 @@ export interface PurchaseRequest {
   decidedAt: string | null;
   expiresAt: string | null;
   riskFlags: RiskFlag[];
+  product: string | null;
+  productUrl: string | null;
+  priceCheck: PriceCheck | null;
 }
 
 export class WalletError extends Error {
@@ -85,6 +89,9 @@ function rowToRequest(r: any): PurchaseRequest {
     decidedAt: r.decided_at,
     expiresAt: r.expires_at,
     riskFlags: JSON.parse(r.risk_flags ?? "[]"),
+    product: r.product ?? null,
+    productUrl: r.product_url ?? null,
+    priceCheck: r.price_check ? JSON.parse(r.price_check) : null,
   };
 }
 
@@ -116,6 +123,7 @@ export class Wallet {
     private readonly issuer: CardIssuer,
     private readonly notifier: Notifier,
     private readonly approvalTimeoutMinutes = 15,
+    private readonly priceLookup?: PriceLookup,
   ) {}
 
   // ---------- activity log ----------
@@ -334,7 +342,7 @@ export class Wallet {
 
   async requestPurchase(
     agent: Agent,
-    input: { amountCents: number; merchant: string; category?: string; reason: string },
+    input: { amountCents: number; merchant: string; category?: string; reason: string; product?: string; productUrl?: string },
   ): Promise<{ request: PurchaseRequest; card?: Card }> {
     const merchant = input.merchant.trim();
     const reason = input.reason.trim();
@@ -356,8 +364,8 @@ export class Wallet {
 
     this.db
       .prepare(
-        `INSERT INTO purchase_requests (id, agent_id, amount_cents, merchant, category, reason, status, decision_reason, created_at, decided_at, expires_at, risk_flags)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO purchase_requests (id, agent_id, amount_cents, merchant, category, reason, status, decision_reason, created_at, decided_at, expires_at, risk_flags, product, product_url)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -372,6 +380,8 @@ export class Wallet {
         status === "pending" ? null : created,
         expiresAt,
         JSON.stringify(risk),
+        input.product?.trim() || null,
+        input.productUrl?.trim() || null,
       );
 
     const what = `${agent.name} wants ${formatUsd(input.amountCents)} at ${merchant}`;
@@ -411,6 +421,31 @@ export class Wallet {
       );
     this.log("card_issued", `One-time card ending ${issued.last4} issued for ${formatUsd(amountCents)} at ${merchant}.`, { requestId });
     return this.cardForRequest(requestId)!;
+  }
+
+  /**
+   * Looks up what the product costs elsewhere and saves the result on the request.
+   * Never throws: a failed lookup just means no price check.
+   */
+  async checkPrice(requestId: string): Promise<PriceCheck | undefined> {
+    const request = this.getRequest(requestId);
+    if (!this.priceLookup || !request.product || request.status !== "pending") return undefined;
+    try {
+      const offers = await this.priceLookup.search(request.product, request.amountCents);
+      const check = comparePrices(this.priceLookup.name, request, offers);
+      this.db.prepare("UPDATE purchase_requests SET price_check = ? WHERE id = ?").run(JSON.stringify(check), requestId);
+      if (check.cheaper) {
+        this.log(
+          "price_check",
+          `${request.product} is ${formatUsd(check.cheaper.savingsCents)} cheaper at ${check.cheaper.merchant} (${formatUsd(check.cheaper.priceCents)}).`,
+          { agentId: request.agentId, requestId },
+        );
+      }
+      return check;
+    } catch (err: any) {
+      console.error("Price check failed:", err?.message ?? err);
+      return undefined;
+    }
   }
 
   async approve(requestId: string): Promise<{ request: PurchaseRequest; card?: Card }> {

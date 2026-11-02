@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Agent Wallet agent API",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "description": "Lets an AI agent ask its owner for money. Small purchases are approved instantly, bigger ones wait for the owner's tap, and anything that breaks the owner's rules is blocked. Approved purchases come with a one-time card."
   },
   "security": [{ "agentKey": [] }],
@@ -47,7 +47,9 @@
           "amount_cents": { "type": "integer", "minimum": 1, "description": "Total price in US cents, including tax and shipping" },
           "merchant": { "type": "string", "description": "Store or website name" },
           "category": { "type": "string", "description": "e.g. travel, groceries, electronics" },
-          "reason": { "type": "string", "description": "One sentence the owner will read" }
+          "reason": { "type": "string", "description": "One sentence the owner will read" },
+          "product": { "type": "string", "description": "Exact product name and model, used to check prices elsewhere" },
+          "product_url": { "type": "string", "format": "uri" }
         }
       },
       "Purchase": {
@@ -69,6 +71,17 @@
                 "code": { "type": "string" },
                 "message": { "type": "string" }
               }
+            }
+          },
+          "cheaper_option": {
+            "type": "object",
+            "description": "Present when the same product was found noticeably cheaper elsewhere",
+            "properties": {
+              "merchant": { "type": "string" },
+              "price": { "type": "string" },
+              "savings": { "type": "string" },
+              "url": { "type": "string" },
+              "demo": { "type": "boolean", "description": "True when prices are made up (demo mode)" }
             }
           },
           "message": { "type": "string", "description": "What the agent should do next" },

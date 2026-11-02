@@ -62,6 +62,15 @@ document.querySelectorAll("nav button").forEach((btn) =>
 
 // ---------- approvals ----------
 
+function dealBox(r) {
+  const deal = r.priceCheck?.cheaper;
+  if (!deal) return "";
+  const where = deal.url ? `<a href="${esc(deal.url)}" target="_blank" rel="noopener">${esc(deal.merchant)}</a>` : esc(deal.merchant);
+  const demo = r.priceCheck.provider === "demo" ? ` <span class="demo-tag">demo prices</span>` : "";
+  return `<div class="flag deal">💰 ${usd(deal.savingsCents)} cheaper at ${where} (${usd(deal.priceCents)}).${demo}
+    <div class="deal-hint">Deny, and the agent can buy it there instead.</div></div>`;
+}
+
 async function renderApprovals() {
   const all = await api("GET", "/api/requests");
   const pending = all.filter((r) => r.status === "pending");
@@ -77,7 +86,9 @@ async function renderApprovals() {
         <div class="meta">${esc(r.agentName)} wants to spend</div>
         <div class="amount">${usd(r.amountCents)}</div>
         <div class="merchant">at ${esc(r.merchant)}${r.category ? ` · ${esc(r.category)}` : ""}</div>
+        ${r.product ? `<div class="meta">${r.productUrl ? `<a href="${esc(r.productUrl)}" target="_blank" rel="noopener">${esc(r.product)}</a>` : esc(r.product)}</div>` : ""}
         <p class="reason">"${esc(r.reason)}"</p>
+        ${dealBox(r)}
         ${r.riskFlags.filter((f) => f.level !== "info").map((f) => `<div class="flag ${f.level}">${f.level === "high" ? "⚠️" : "⚡"} ${esc(f.message)}</div>`).join("")}
         ${r.riskFlags.filter((f) => f.level === "info").map((f) => `<div class="flag info">${esc(f.message)}</div>`).join("")}
         <div class="actions">

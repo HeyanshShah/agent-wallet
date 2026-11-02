@@ -13,6 +13,7 @@ AI agents can now browse and check out, but handing one your real card is a bad 
 What makes it different:
 
 - **Scam radar.** Every request is checked for lookalike stores (`amaz0n-deals.com`, `paypa1.com`), scam payment patterns (gift cards, crypto, wire transfers), double purchases, and amounts far above the agent's usual. A flagged purchase is never approved automatically, however small.
+- **Price checks.** Before you tap Approve, it looks up the same product elsewhere: "💰 $72 cheaper at Target." The agent sees it too, so if you deny, it can buy it there instead.
 - **Face ID approvals.** With a passkey set up, risky purchases and anything over an amount you choose need Face ID or your fingerprint. A stolen password alone can't approve them.
 - **One-tap from the notification.** On Android and desktop, approve or deny right from the push notification without opening the app.
 - **Insights.** See spending by agent, category and store, the last 6 months, and how much money your rules stopped.
@@ -93,6 +94,16 @@ The approval app is a PWA. On your phone, open the server's URL, then **Add to H
 
 On Android and desktop Chrome, the notification has **Approve** and **Deny** buttons. iPhone doesn't support notification buttons, so tapping the notification opens the app. Purchases that need Face ID always open the app.
 
+## Price checks
+
+When an agent includes the product name (the MCP tool asks for it), pending purchases are checked against Google Shopping prices through [SerpApi](https://serpapi.com/google-shopping-api). Savings of at least $5 and 5% show on the approval card and in the notification, and come back to the agent as `cheaper_option`.
+
+- Real prices: set `SERPAPI_KEY` (their free plan covers a small number of searches a month).
+- To try it without a key: set `PRICE_CHECK=demo`. Prices are made up and labeled "demo prices" in the app.
+- Neither set: price checks are off.
+
+The SerpApi integration is tested against a recorded response shape, not a live key.
+
 ## Face ID approvals
 
 Go to **Agents → Set up Face ID**. Once a passkey is set up, risky purchases always need it, and you can also require it over an amount. Passkeys are tied to the server's address, so set `PUBLIC_URL` to the exact URL you open the app at.
@@ -144,6 +155,7 @@ npm run dev       # restart on changes
 | `src/rules.ts` | Rules engine |
 | `src/risk.ts` | Scam and anomaly checks |
 | `src/passkeys.ts` | Face ID / fingerprint approvals |
+| `src/prices.ts` | Price checks |
 | `src/wallet.ts` | Agents, requests, approvals, cards, activity log |
 | `src/cards.ts` | Mock and Lithic card issuers |
 | `src/app.ts` | HTTP API |
@@ -154,7 +166,6 @@ npm run dev       # restart on changes
 ## Next steps
 
 - Lithic webhooks for real charge events, and merchant-locked cards
-- Price checks before you approve ("this is $20 cheaper elsewhere")
 - Require Face ID to change rules, not just to approve
 - Multiple users with real sign-in
 - Signed approvals that work with Google AP2, Visa Intelligent Commerce and Mastercard Agent Pay
