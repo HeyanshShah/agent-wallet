@@ -82,7 +82,7 @@ async function renderApprovals() {
         ${r.riskFlags.filter((f) => f.level === "info").map((f) => `<div class="flag info">${esc(f.message)}</div>`).join("")}
         <div class="actions">
           <button class="deny" data-deny="${r.id}">Deny</button>
-          <button class="approve" data-approve="${r.id}">Approve</button>
+          <button class="approve" data-approve="${r.id}" data-passkey="${r.needsPasskey}">${r.needsPasskey ? "Approve with Face ID" : "Approve"}</button>
         </div>
         <div class="meta" style="margin-top:10px">Expires ${when(r.expiresAt)}</div>
       </div>`,
@@ -111,14 +111,19 @@ document.addEventListener("click", async (e) => {
   e.target.disabled = true;
   try {
     if (approveId) {
-      const res = await api("POST", `/api/requests/${approveId}/approve`);
+      let body;
+      if (e.target.dataset.passkey === "true") {
+        const optionsJSON = await api("POST", `/api/requests/${approveId}/approve/options`);
+        body = { passkey: await SimpleWebAuthnBrowser.startAuthentication({ optionsJSON }) };
+      }
+      const res = await api("POST", `/api/requests/${approveId}/approve`, body);
       toast(res.request.status === "approved" ? "Approved. A one-time card was sent to the agent." : `Blocked: ${res.request.decisionReason}`);
     } else {
       await api("POST", `/api/requests/${denyId}/deny`);
       toast("Denied.");
     }
   } catch (err) {
-    toast(err.message);
+    toast(err.name === "NotAllowedError" ? "Cancelled." : err.message);
   }
   refresh();
 });
@@ -197,6 +202,45 @@ $("#agent-form").addEventListener("submit", async (e) => {
   }
 });
 
+// ---------- security ----------
+
+async function renderSecurity() {
+  const s = await api("GET", "/api/settings");
+  const on = s.passkeyRequiredOverCents !== null;
+  $("#security").innerHTML = s.passkeyCount
+    ? `<strong>Face ID approvals</strong>
+       <p class="muted">Risky purchases always need Face ID or your fingerprint.${on ? ` So does anything over ${usd(s.passkeyRequiredOverCents)}.` : ""}</p>
+       <form id="passkey-form" class="row" style="align-items:end">
+         <label>Also require it over ($)<input name="over" type="number" min="0" step="0.01" placeholder="Off" value="${on ? (s.passkeyRequiredOverCents / 100).toFixed(2) : ""}"></label>
+         <button class="ghost" type="submit" style="margin-bottom:12px">Save</button>
+       </form>
+       <button class="ghost" id="add-passkey">Add another device</button>`
+    : `<strong>Face ID approvals</strong>
+       <p class="muted">Make big or risky purchases need Face ID or your fingerprint, so a stolen password alone can't approve them.</p>
+       <button class="primary" id="add-passkey">Set up Face ID</button>`;
+  $("#add-passkey").onclick = async () => {
+    try {
+      const optionsJSON = await api("POST", "/api/passkeys/register/options");
+      const response = await SimpleWebAuthnBrowser.startRegistration({ optionsJSON });
+      await api("POST", "/api/passkeys/register/verify", response);
+      toast("Face ID is set up.");
+      renderSecurity();
+    } catch (err) {
+      toast(err.name === "NotAllowedError" ? "Cancelled." : err.message);
+    }
+  };
+  const form = $("#passkey-form");
+  if (form) {
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const v = new FormData(form).get("over");
+      await api("PATCH", "/api/settings", { passkeyRequiredOverCents: v === "" ? null : toCents(v) });
+      toast("Saved.");
+      renderSecurity();
+    };
+  }
+}
+
 // ---------- activity ----------
 
 async function renderActivity() {
@@ -252,7 +296,7 @@ async function refresh() {
   const tab = document.querySelector("nav button.active").dataset.tab;
   try {
     if (tab === "approvals") await renderApprovals();
-    if (tab === "agents") await renderAgents();
+    if (tab === "agents") await Promise.all([renderAgents(), renderSecurity()]);
     if (tab === "activity") await renderActivity();
     if (tab !== "approvals") await renderApprovals(); // keeps the badge current
   } catch (err) {

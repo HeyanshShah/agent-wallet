@@ -6,6 +6,8 @@ import { issuerFromEnv } from "./cards.js";
 import { Notifier } from "./notify.js";
 import { Wallet, hashKey } from "./wallet.js";
 import { createApp } from "./app.js";
+import { Passkeys, passkeyConfigFromUrl } from "./passkeys.js";
+import { readFileSync } from "node:fs";
 
 try {
   process.loadEnvFile(".env");
@@ -31,10 +33,15 @@ if (env.OWNER_TOKEN) {
   console.log(`  ${token}\n`);
 }
 
-const app = createApp({ wallet, notifier, ownerTokenHash, enableDemoCharge: issuer.name === "mock" });
+const port = Number(env.PORT ?? 3000);
+const passkeys = new Passkeys(db, passkeyConfigFromUrl(env.PUBLIC_URL ?? `http://localhost:${port}`));
+
+const app = createApp({ wallet, notifier, passkeys, ownerTokenHash, enableDemoCharge: issuer.name === "mock" });
+// The browser half of passkeys, served to the approval app from the installed package.
+const webauthnBundle = readFileSync(new URL("../dist/bundle/index.umd.min.js", import.meta.resolve("@simplewebauthn/browser")));
+app.get("/vendor/simplewebauthn.js", (c) => c.body(webauthnBundle, 200, { "Content-Type": "text/javascript" }));
 app.use("/*", serveStatic({ root: "./public" }));
 
-const port = Number(env.PORT ?? 3000);
 serve({ fetch: app.fetch, port }, () => {
   console.log(`Agent Wallet running at http://localhost:${port} (card issuer: ${issuer.name})`);
 });

@@ -4,6 +4,7 @@ import { MockIssuer } from "../src/cards.js";
 import { Notifier } from "../src/notify.js";
 import { Wallet, hashKey } from "../src/wallet.js";
 import { createApp } from "../src/app.js";
+import { Passkeys } from "../src/passkeys.js";
 
 const OWNER = "owner-test-token";
 
@@ -11,14 +12,15 @@ function setup() {
   const db = openDb(":memory:");
   const notifier = new Notifier(db, { enablePush: false });
   const wallet = new Wallet(db, new MockIssuer(), notifier, 15);
-  const app = createApp({ wallet, notifier, ownerTokenHash: hashKey(OWNER), enableDemoCharge: true });
+  const passkeys = new Passkeys(db, { rpID: "localhost", rpName: "Agent Wallet", origin: "http://localhost:3000" });
+  const app = createApp({ wallet, notifier, passkeys, ownerTokenHash: hashKey(OWNER), enableDemoCharge: true });
   const req = (method: string, path: string, token: string, body?: unknown) =>
     app.request(path, {
       method,
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: body ? JSON.stringify(body) : undefined,
     });
-  return { db, wallet, req };
+  return { db, wallet, passkeys, req };
 }
 
 let t: ReturnType<typeof setup>;
@@ -146,6 +148,31 @@ describe("purchase flow", () => {
     expect(body.risk_flags[0].code).toBe("lookalike_merchant");
     const pending = await (await t.req("GET", "/api/requests?status=pending", OWNER)).json();
     expect(pending[0].riskFlags[0].level).toBe("high");
+  });
+
+  it("requires a passkey for big or risky approvals once one is set up", async () => {
+    // Can't require passkeys before registering one.
+    expect((await t.req("PATCH", "/api/settings", OWNER, { passkeyRequiredOverCents: 5_000 })).status).toBe(400);
+
+    // Pretend a passkey is registered (real registration needs a browser; covered by the e2e check).
+    t.db.prepare("INSERT INTO passkeys (id, public_key, counter, created_at) VALUES ('cred', 'AA==', 0, '2026-01-01')").run();
+    expect((await t.req("PATCH", "/api/settings", OWNER, { passkeyRequiredOverCents: 5_000 })).status).toBe(200);
+
+    const small = await (await buy(4_000)).json();
+    const big = await (await buy(8_000)).json();
+    const listed = await (await t.req("GET", "/api/requests?status=pending", OWNER)).json();
+    expect(listed.find((r: any) => r.id === big.id).needsPasskey).toBe(true);
+    expect(listed.find((r: any) => r.id === small.id).needsPasskey).toBe(false);
+
+    const blocked = await t.req("POST", `/api/requests/${big.id}/approve`, OWNER);
+    expect(blocked.status).toBe(403);
+    expect((await blocked.json()).passkeyRequired).toBe(true);
+    const fake = await t.req("POST", `/api/requests/${big.id}/approve`, OWNER, { passkey: { id: "cred", response: {} } });
+    expect(fake.status).toBe(403);
+
+    expect((await t.req("POST", `/api/requests/${small.id}/approve`, OWNER)).status).toBe(200);
+    // Denying never needs a passkey.
+    expect((await t.req("POST", `/api/requests/${big.id}/deny`, OWNER)).status).toBe(200);
   });
 
   it("writes everything to the activity log", async () => {

@@ -4,6 +4,8 @@ import { z } from "zod";
 import { hashKey, type Agent, type Card, type PurchaseRequest, type Wallet, WalletError } from "./wallet.js";
 import type { Notifier, WalletEvent } from "./notify.js";
 import { formatUsd } from "./rules.js";
+import { hasHighRisk } from "./risk.js";
+import type { Passkeys } from "./passkeys.js";
 
 type Env = { Variables: { agent: Agent } };
 
@@ -69,8 +71,15 @@ function bearer(c: Context): string | undefined {
   return h?.startsWith("Bearer ") ? h.slice(7).trim() : undefined;
 }
 
-export function createApp(opts: { wallet: Wallet; notifier: Notifier; ownerTokenHash: string; enableDemoCharge?: boolean }) {
-  const { wallet, notifier, ownerTokenHash } = opts;
+export function createApp(opts: {
+  wallet: Wallet;
+  notifier: Notifier;
+  passkeys: Passkeys;
+  ownerTokenHash: string;
+  enableDemoCharge?: boolean;
+}) {
+  const { wallet, notifier, passkeys, ownerTokenHash } = opts;
+  const needsPasskey = (r: PurchaseRequest) => passkeys.isRequired(r.amountCents, hasHighRisk(r.riskFlags));
   const app = new Hono<Env>();
 
   app.onError((err, c) => {
@@ -158,10 +167,49 @@ export function createApp(opts: { wallet: Wallet; notifier: Notifier; ownerToken
 
   app.get("/api/requests", (c) => {
     const status = c.req.query("status") as PurchaseRequest["status"] | undefined;
-    return c.json(wallet.listRequests({ status }));
+    return c.json(wallet.listRequests({ status }).map((r) => ({ ...r, needsPasskey: r.status === "pending" && needsPasskey(r) })));
   });
 
-  app.post("/api/requests/:id/approve", async (c) => c.json(await wallet.approve(c.req.param("id"))));
+  app.post("/api/requests/:id/approve/options", async (c) => {
+    const id = c.req.param("id");
+    wallet.getRequest(id); // 404 if it doesn't exist
+    return c.json(await passkeys.authenticationOptions(`approve:${id}`));
+  });
+
+  app.post("/api/requests/:id/approve", async (c) => {
+    const id = c.req.param("id");
+    const request = wallet.getRequest(id);
+    if (request.status === "pending" && needsPasskey(request)) {
+      const body = (await c.req.json().catch(() => ({}))) as { passkey?: any };
+      if (!body.passkey || !(await passkeys.verifyAuthentication(`approve:${id}`, body.passkey))) {
+        return c.json({ error: "Confirm with Face ID or your fingerprint to approve this one.", passkeyRequired: true }, 403);
+      }
+    }
+    return c.json(await wallet.approve(id));
+  });
+
+  // ---------- passkeys and settings ----------
+
+  app.get("/api/settings", (c) =>
+    c.json({ passkeyCount: passkeys.count(), passkeyRequiredOverCents: passkeys.requiredOverCents ?? null }),
+  );
+
+  app.patch("/api/settings", async (c) => {
+    const body = z.object({ passkeyRequiredOverCents: cents.nullable() }).parse(await c.req.json());
+    if (body.passkeyRequiredOverCents !== null && passkeys.count() === 0) {
+      throw new WalletError("Set up Face ID or a fingerprint first.");
+    }
+    passkeys.requiredOverCents = body.passkeyRequiredOverCents ?? undefined;
+    return c.json({ passkeyCount: passkeys.count(), passkeyRequiredOverCents: passkeys.requiredOverCents ?? null });
+  });
+
+  app.post("/api/passkeys/register/options", async (c) => c.json(await passkeys.registrationOptions()));
+
+  app.post("/api/passkeys/register/verify", async (c) => {
+    const ok = await passkeys.verifyRegistration(await c.req.json());
+    if (!ok) throw new WalletError("Couldn't verify that passkey. Try again.");
+    return c.json({ ok: true, passkeyCount: passkeys.count() }, 201);
+  });
 
   app.post("/api/requests/:id/deny", async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as { note?: string };
