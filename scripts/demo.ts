@@ -37,8 +37,11 @@ const reuse = await call(apiKey, "POST", `/v1/cards/${small.card.id}/charge`, { 
 console.log(`  Store tries to charge it again: ${reuse.reason}`);
 
 step("Agent wants $89 headphones (needs your approval)");
-const big = await call(apiKey, "POST", "/v1/purchases", { amount_cents: 8900, merchant: "Best Buy", category: "electronics", reason: "Noise-cancelling headphones for the flight" });
+const big = await call(apiKey, "POST", "/v1/purchases", { amount_cents: 8900, merchant: "Best Buy", category: "electronics", reason: "Noise-cancelling headphones for the flight", product: "Sony WH-CH720N headphones" });
 console.log(`  ${big.status}. Open the app and tap Approve or Deny…`);
+await new Promise((r) => setTimeout(r, 1500));
+const withPrice = await call(apiKey, "GET", `/v1/purchases/${big.id}`);
+if (withPrice.cheaper_option) console.log(`  Price check: ${withPrice.cheaper_option.savings} cheaper at ${withPrice.cheaper_option.merchant}${withPrice.cheaper_option.demo ? " (demo prices)" : ""}`);
 let polled = big;
 while (polled.status === "pending") {
   await new Promise((r) => setTimeout(r, 2000));

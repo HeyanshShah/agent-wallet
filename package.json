@@ -1,6 +1,6 @@
 {
   "name": "agent-wallet",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Spending rules, phone approvals and one-time cards for AI agents",
   "scripts": {
     "dev": "tsx watch src/server.ts",
@@ -41,5 +41,11 @@
     "public",
     "README.md",
     ".env.example"
-  ]
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/HeyanshShah/agent-wallet"
+  },
+  "homepage": "https://heyanshshah.github.io/agent-wallet/"
 }

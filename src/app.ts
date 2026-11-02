@@ -29,6 +29,8 @@ const purchaseSchema = z.object({
   merchant: z.string().trim().min(1).max(200),
   category: z.string().trim().max(60).optional(),
   reason: z.string().trim().min(1).max(500),
+  product: z.string().trim().max(200).optional(),
+  product_url: z.string().trim().url().max(2000).optional(),
 });
 
 const chargeSchema = z.object({ amount_cents: z.number().int().positive(), merchant: z.string().trim().min(1) });
@@ -54,6 +56,15 @@ function agentView(request: PurchaseRequest, card?: Card) {
     decision_reason: request.decisionReason,
     expires_at: request.expiresAt,
     risk_flags: request.riskFlags.length ? request.riskFlags : undefined,
+    cheaper_option: request.priceCheck?.cheaper
+      ? {
+          merchant: request.priceCheck.cheaper.merchant,
+          price: formatUsd(request.priceCheck.cheaper.priceCents),
+          savings: formatUsd(request.priceCheck.cheaper.savingsCents),
+          url: request.priceCheck.cheaper.url,
+          demo: request.priceCheck.provider === "demo" || undefined,
+        }
+      : undefined,
     message: messages[request.status],
     card: usable
       ? {
@@ -99,9 +110,11 @@ export function createApp(opts: {
   const notifyPending = (r: PurchaseRequest) => {
     const what = `${r.agentName} wants ${formatUsd(r.amountCents)} at ${r.merchant}`;
     const warning = r.riskFlags.find((f) => f.level === "high");
+    const deal = r.priceCheck?.cheaper;
+    const dealLine = deal ? ` 💰 ${formatUsd(deal.savingsCents)} cheaper at ${deal.merchant}.` : "";
     return notifier.push({
       title: warning ? "⚠️ Risky purchase request" : "Approve purchase?",
-      body: warning ? `${what}. ${warning.message}` : `${what}: ${r.reason}`,
+      body: (warning ? `${what}. ${warning.message}` : `${what}: ${r.reason}`) + dealLine,
       requestId: r.id,
       // Purchases that need Face ID must be opened in the app instead.
       quickToken: needsPasskey(r) ? undefined : quickToken(r.id),
@@ -117,6 +130,21 @@ export function createApp(opts: {
   });
 
   app.get("/health", (c) => c.json({ ok: true }));
+
+  // Discovery document for the Agent Spend Protocol (docs/AGENT-SPEND-PROTOCOL.md).
+  app.get("/.well-known/agent-spend", (c) => {
+    const base = new URL(c.req.url).origin;
+    return c.json({
+      protocol: "agent-spend",
+      version: "0.1",
+      purchases_endpoint: `${base}/v1/purchases`,
+      limits_endpoint: `${base}/v1/me`,
+      openapi: `${base}/openapi.json`,
+      auth: ["bearer"],
+      credential_types: ["one_time_card"],
+      features: ["risk_flags", "price_check", "idempotency", "owner_approval", "passkey_approval"],
+    });
+  });
 
   // ---------- agent API (Bearer = agent key) ----------
 
@@ -147,13 +175,23 @@ export function createApp(opts: {
 
   app.post("/v1/purchases", async (c) => {
     const body = purchaseSchema.parse(await c.req.json());
-    const { request, card } = await wallet.requestPurchase(c.get("agent"), {
+    const idempotencyKey = c.req.header("Idempotency-Key")?.trim().slice(0, 200) || undefined;
+    const { request, card, replayed } = await wallet.requestPurchase(c.get("agent"), {
       amountCents: body.amount_cents,
       merchant: body.merchant,
       category: body.category,
       reason: body.reason,
+      product: body.product,
+      productUrl: body.product_url,
+      idempotencyKey,
     });
-    if (request.status === "pending") void notifyPending(request);
+    if (replayed) return c.json(agentView(request, wallet.cardForRequest(request.id)), 200);
+    if (request.status === "pending") {
+      // Give the price check a few seconds so the notification can mention a better deal.
+      void Promise.race([wallet.checkPrice(request.id), new Promise((r) => setTimeout(r, 4000))]).then(() =>
+        notifyPending(wallet.getRequest(request.id)),
+      );
+    }
     return c.json(agentView(request, card), request.status === "blocked" ? 403 : 201);
   });
 

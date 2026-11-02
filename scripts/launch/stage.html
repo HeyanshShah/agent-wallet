@@ -1,0 +1,64 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Agent Wallet demo</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; height: 100vh; display: grid; grid-template-columns: 1fr 430px; gap: 40px; padding: 40px 56px;
+         background: radial-gradient(1200px 600px at 20% 0%, #1e293b, #0b1120); font: 17px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; color: #e2e8f0; }
+  .left { display: flex; flex-direction: column; min-height: 0; }
+  h1 { font-size: 34px; margin: 0 0 4px; letter-spacing: -0.02em; }
+  .tag { color: #94a3b8; margin: 0 0 24px; font-size: 19px; }
+  .chat { flex: 1; background: #0f172a; border: 1px solid #23304a; border-radius: 18px; padding: 22px; overflow: hidden; display: flex; flex-direction: column; gap: 14px; }
+  .chat-head { color: #94a3b8; font-size: 14px; display: flex; gap: 8px; align-items: center; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #f59e0b; display: inline-block; }
+  .msg { max-width: 88%; padding: 12px 16px; border-radius: 14px; animation: in .35s ease; white-space: pre-wrap; }
+  .user { align-self: flex-end; background: #2563eb; color: #fff; }
+  .agent { align-self: flex-start; background: #1e293b; }
+  .tool { align-self: flex-start; font: 14px/1.5 ui-monospace, Menlo, monospace; color: #93c5fd; background: #0b1324; border: 1px dashed #334155; }
+  .ok { color: #4ade80; } .bad { color: #f87171; } .warn { color: #fbbf24; }
+  .caption { position: fixed; left: 56px; bottom: 28px; font-size: 22px; font-weight: 700; background: #fde047; color: #111827; padding: 8px 16px; border-radius: 10px; opacity: 0; transition: opacity .3s; }
+  .caption.show { opacity: 1; }
+  .phone { width: 430px; height: calc(100vh - 80px); max-height: 900px; border-radius: 48px; border: 12px solid #000; background: #000; box-shadow: 0 30px 80px rgba(0,0,0,.5), 0 0 0 2px #334155; overflow: hidden; position: relative; }
+  .phone iframe { width: 100%; height: 100%; border: 0; background: #fff; }
+  .notch { position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 140px; height: 28px; background: #000; border-radius: 0 0 18px 18px; z-index: 2; }
+  .faceid { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.35); z-index: 3; opacity: 0; transition: opacity .25s; pointer-events: none; }
+  .faceid.show { opacity: 1; }
+  .faceid div { background: rgba(30,41,59,.92); color: #fff; border-radius: 22px; padding: 22px 30px; text-align: center; font-weight: 600; }
+  .faceid svg { display: block; margin: 0 auto 8px; }
+  @keyframes in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+</style>
+</head>
+<body>
+  <div class="left">
+    <h1>Agent Wallet</h1>
+    <p class="tag">Let AI agents shop for you, without handing them your card.</p>
+    <div class="chat" id="chat"><div class="chat-head"><span class="dot"></span> AI agent · connected to Agent Wallet over MCP</div></div>
+  </div>
+  <div class="phone">
+    <div class="notch"></div>
+    <iframe id="app" src="/" allow="publickey-credentials-get *; publickey-credentials-create *"></iframe>
+    <div class="faceid" id="faceid"><div>
+      <svg width="54" height="54" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="1.6" stroke-linecap="round"><path d="M7 3H5a2 2 0 0 0-2 2v2M17 3h2a2 2 0 0 1 2 2v2M7 21H5a2 2 0 0 1-2-2v-2M17 21h2a2 2 0 0 0 2-2v-2M9 9v1M15 9v1M12 9v4h-1M9 16c1.5 1 4.5 1 6 0"/></svg>
+      Face ID</div></div>
+  </div>
+  <div class="caption" id="caption"></div>
+<script>
+  const chat = document.getElementById("chat");
+  window.say = (who, html) => {
+    const d = document.createElement("div");
+    d.className = "msg " + who;
+    d.innerHTML = html;
+    chat.appendChild(d);
+    while (chat.scrollHeight > chat.clientHeight && chat.children.length > 2) chat.children[1].remove();
+  };
+  window.caption = (text) => {
+    const c = document.getElementById("caption");
+    c.textContent = text || "";
+    c.classList.toggle("show", !!text);
+  };
+  window.faceid = (on) => document.getElementById("faceid").classList.toggle("show", on);
+</script>
+</body>
+</html>

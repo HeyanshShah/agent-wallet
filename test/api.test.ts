@@ -5,13 +5,14 @@ import { Notifier } from "../src/notify.js";
 import { Wallet, hashKey } from "../src/wallet.js";
 import { createApp } from "../src/app.js";
 import { Passkeys } from "../src/passkeys.js";
+import { DemoLookup, type PriceLookup } from "../src/prices.js";
 
 const OWNER = "owner-test-token";
 
-function setup() {
+function setup(priceLookup?: PriceLookup) {
   const db = openDb(":memory:");
   const notifier = new Notifier(db, { enablePush: false });
-  const wallet = new Wallet(db, new MockIssuer(), notifier, 15);
+  const wallet = new Wallet(db, new MockIssuer(), notifier, 15, priceLookup);
   const passkeys = new Passkeys(db, { rpID: "localhost", rpName: "Agent Wallet", origin: "http://localhost:3000" });
   const app = createApp({ wallet, notifier, passkeys, ownerTokenHash: hashKey(OWNER), enableDemoCharge: true });
   const req = (method: string, path: string, token: string, body?: unknown) =>
@@ -20,7 +21,7 @@ function setup() {
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: body ? JSON.stringify(body) : undefined,
     });
-  return { db, wallet, passkeys, notifier, req };
+  return { db, app, wallet, passkeys, notifier, req };
 }
 
 let t: ReturnType<typeof setup>;
@@ -193,7 +194,9 @@ describe("purchase flow", () => {
   });
 
   it("summarizes spending in insights", async () => {
-    await buy(2_000, "Amazon");
+    const small = await (await buy(2_000, "Amazon")).json();
+    // Charging the card must not turn an auto-approval into "approved by you".
+    await t.req("POST", `/v1/cards/${small.card.id}/charge`, agentKey, { amount_cents: 2_000, merchant: "Amazon" });
     const big = await (await t.req("POST", "/v1/purchases", agentKey, { amount_cents: 9_000, merchant: "Best Buy", category: "electronics", reason: "x" })).json();
     await t.req("POST", `/api/requests/${big.id}/approve`, OWNER);
     await buy(99_999); // blocked
@@ -209,6 +212,60 @@ describe("purchase flow", () => {
     expect(ins.topMerchants.map((m: any) => m.label)).toEqual(["Best Buy", "Amazon"]);
     expect(ins.months).toHaveLength(6);
     expect(ins.months.at(-1).cents).toBe(11_000);
+  });
+
+  it("checks prices before you approve and tells you and the agent", async () => {
+    const p = setup(new DemoLookup());
+    const pushes: any[] = [];
+    (p.notifier as any).push = async (x: any) => void pushes.push(x);
+    const { apiKey } = await (
+      await p.req("POST", "/api/agents", OWNER, { name: "A", monthlyBudgetCents: 100_000, perPurchaseCapCents: 50_000 })
+    ).json();
+    const created = await (
+      await p.req("POST", "/v1/purchases", apiKey, {
+        amount_cents: 39_999, merchant: "Best Buy", reason: "Headphones", product: "Sony WH-1000XM5", product_url: "https://bestbuy.com/x",
+      })
+    ).json();
+    await new Promise((r) => setTimeout(r, 50));
+    const polled = await (await p.req("GET", `/v1/purchases/${created.id}`, apiKey)).json();
+    expect(polled.cheaper_option).toMatchObject({ merchant: "Target", price: "$327.99", savings: "$72.00", demo: true });
+    expect(pushes[0].body).toContain("$72.00 cheaper at Target");
+    const listed = await (await p.req("GET", "/api/requests?status=pending", OWNER)).json();
+    expect(listed[0].priceCheck.cheaper.merchant).toBe("Target");
+    expect(listed[0].product).toBe("Sony WH-1000XM5");
+  });
+
+  it("skips price checks when there's no product name", async () => {
+    const p = setup(new DemoLookup());
+    const { apiKey } = await (
+      await p.req("POST", "/api/agents", OWNER, { name: "A", monthlyBudgetCents: 100_000, perPurchaseCapCents: 50_000 })
+    ).json();
+    const created = await (await p.req("POST", "/v1/purchases", apiKey, { amount_cents: 39_999, merchant: "Best Buy", reason: "x" })).json();
+    await new Promise((r) => setTimeout(r, 50));
+    expect((await (await p.req("GET", `/v1/purchases/${created.id}`, apiKey)).json()).cheaper_option).toBeUndefined();
+  });
+
+  it("treats a retry with the same Idempotency-Key as the same purchase", async () => {
+    const send = () =>
+      t.app.request("/v1/purchases", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${agentKey}`, "Content-Type": "application/json", "Idempotency-Key": "order-42" },
+        body: JSON.stringify({ amount_cents: 1_500, merchant: "Amazon", reason: "Cable" }),
+      });
+    const first = await send();
+    const second = await send();
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(200);
+    const [a, b] = [await first.json(), await second.json()];
+    expect(b.id).toBe(a.id);
+    expect(b.card.number).toBe(a.card.number);
+    expect(t.wallet.listRequests()).toHaveLength(1);
+  });
+
+  it("publishes a discovery document", async () => {
+    const doc = await (await t.app.request("/.well-known/agent-spend")).json();
+    expect(doc).toMatchObject({ protocol: "agent-spend", version: "0.1", credential_types: ["one_time_card"] });
+    expect(doc.purchases_endpoint).toMatch(/\/v1\/purchases$/);
   });
 
   it("writes everything to the activity log", async () => {

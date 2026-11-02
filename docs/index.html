@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Wallet: let AI agents shop without your card</title>
+  <meta name="description" content="Open-source spending rules, Face ID approvals, scam checks and one-time cards for AI agents. Works with Claude and any MCP agent.">
+  <meta property="og:title" content="Agent Wallet">
+  <meta property="og:description" content="Let AI agents shop for you, without handing them your card.">
+  <meta property="og:type" content="website">
+  <link rel="icon" href="media/icon.svg" type="image/svg+xml">
+  <style>
+    :root {
+      --bg: #ffffff; --soft: #f6f7f9; --text: #0f172a; --muted: #64748b; --border: #e2e8f0;
+      --accent: #2563eb; --good: #16a34a; --bad: #dc2626; --code: #0f172a; --code-text: #e2e8f0;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #0b1120; --soft: #111a2e; --text: #e2e8f0; --muted: #94a3b8; --border: #23304a; --accent: #3b82f6; --code: #060b16; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 17px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    a { color: var(--accent); }
+    .wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 20px 0; }
+    .logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; color: var(--text); text-decoration: none; }
+    .btn { display: inline-block; padding: 12px 20px; border-radius: 12px; font-weight: 600; text-decoration: none; }
+    .btn.primary { background: var(--accent); color: #fff; }
+    .btn.ghost { border: 1px solid var(--border); color: var(--text); }
+    .hero { text-align: center; padding: 56px 0 32px; }
+    .hero h1 { font-size: clamp(36px, 6vw, 64px); line-height: 1.05; letter-spacing: -0.03em; margin: 0 0 18px; }
+    .hero p { font-size: clamp(18px, 2.4vw, 22px); color: var(--muted); max-width: 680px; margin: 0 auto 28px; }
+    .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    .video { margin: 40px auto 0; border-radius: 20px; overflow: hidden; border: 1px solid var(--border); box-shadow: 0 30px 80px rgba(15, 23, 42, .25); }
+    .video video { display: block; width: 100%; height: auto; }
+    section { padding: 72px 0 0; }
+    h2 { font-size: clamp(28px, 4vw, 40px); letter-spacing: -0.02em; margin: 0 0 12px; }
+    .lead { color: var(--muted); font-size: 19px; margin: 0 0 32px; max-width: 720px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+    .card { background: var(--soft); border: 1px solid var(--border); border-radius: 18px; padding: 22px; }
+    .card h3 { margin: 6px 0 6px; font-size: 19px; }
+    .card p { margin: 0; color: var(--muted); font-size: 16px; }
+    .emoji { font-size: 26px; }
+    .steps { counter-reset: s; display: grid; gap: 12px; }
+    .step { display: grid; grid-template-columns: 44px 1fr; gap: 14px; align-items: start; }
+    .step::before { counter-increment: s; content: counter(s); width: 44px; height: 44px; border-radius: 50%; background: var(--accent); color: #fff; display: grid; place-items: center; font-weight: 700; }
+    .step b { display: block; }
+    .step span { color: var(--muted); }
+    pre { background: var(--code); color: var(--code-text); border-radius: 14px; padding: 18px; overflow-x: auto; font-size: 14px; line-height: 1.5; margin: 0 0 14px; }
+    .two { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 24px; align-items: start; }
+    .compare { width: 100%; border-collapse: collapse; font-size: 16px; }
+    .compare th, .compare td { text-align: left; padding: 12px; border-bottom: 1px solid var(--border); }
+    .compare td:not(:first-child), .compare th:not(:first-child) { text-align: center; }
+    .yes { color: var(--good); font-weight: 700; } .no { color: var(--muted); }
+    footer { padding: 72px 0 40px; color: var(--muted); font-size: 15px; text-align: center; }
+    @media (max-width: 600px) { .compare { font-size: 14px; } .compare th, .compare td { padding: 8px 6px; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <a class="logo" href="#"><img src="media/icon.svg" width="32" height="32" alt="">Agent Wallet</a>
+      <a class="btn ghost" href="https://github.com/HeyanshShah/agent-wallet">GitHub</a>
+    </header>
+
+    <div class="hero">
+      <h1>Let AI agents shop for you.<br>Without your card.</h1>
+      <p>Spending rules, Face ID approvals, scam and price checks, and one-time cards for any AI agent. Open source. Set up in five minutes.</p>
+      <div class="cta">
+        <a class="btn primary" href="https://github.com/HeyanshShah/agent-wallet#quick-start">Get started</a>
+        <a class="btn ghost" href="https://render.com/deploy?repo=https://github.com/HeyanshShah/agent-wallet">Deploy in one click</a>
+      </div>
+      <div class="video">
+        <video src="media/demo.mp4" poster="media/poster.png" autoplay muted loop playsinline controls></video>
+      </div>
+    </div>
+
+    <section>
+      <h2>Your agent asks. You decide.</h2>
+      <p class="lead">AI agents can already book flights and check out. Giving one your real card is a bad idea. Agent Wallet sits in between.</p>
+      <div class="steps">
+        <div class="step"><div><b>You set the rules</b><span>A budget per agent, a cap per purchase, allowed categories, blocked stores, and an auto-approve limit.</span></div></div>
+        <div class="step"><div><b>The agent asks for money</b><span>One MCP tool call, or one HTTP request, with the store, the amount and the reason.</span></div></div>
+        <div class="step"><div><b>Small buys go through. Big ones buzz your phone.</b><span>Approve with one tap, or with Face ID for large or risky purchases. Anything against your rules is blocked.</span></div></div>
+        <div class="step"><div><b>The agent gets a one-time card</b><span>It's locked to the approved amount and dies after one use. Your real card is never shared.</span></div></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>It watches out for you</h2>
+      <div class="grid">
+        <div class="card"><div class="emoji">🛡️</div><h3>Scam radar</h3><p>Catches fake stores like amaz0n-deals.com, gift card and crypto scams, double purchases, and unusual amounts. A flagged purchase is never auto-approved.</p></div>
+        <div class="card"><div class="emoji">💰</div><h3>Price checks</h3><p>"$16 cheaper at Target." Before you approve, it checks other stores, and the agent can switch.</p></div>
+        <div class="card"><div class="emoji">🔐</div><h3>Face ID approvals</h3><p>Big or risky purchases need your face or fingerprint (passkeys), so a stolen password alone can't approve them.</p></div>
+        <div class="card"><div class="emoji">📊</div><h3>Insights</h3><p>What each agent spent, where, on what, and how much your rules stopped.</p></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="two">
+        <div>
+          <h2>Works with any agent</h2>
+          <p class="lead">Claude, Cursor or any MCP client in one line. Everything else via a small HTTP API with an OpenAPI spec.</p>
+        </div>
+        <div>
+<pre>claude mcp add agent-wallet \
+  -e WALLET_URL=https://your-wallet.app \
+  -e WALLET_AGENT_KEY=aw_agent_... \
+  -- npx -y -p github:HeyanshShah/agent-wallet agent-wallet-mcp</pre>
+<pre>POST /v1/purchases
+{ "amount_cents": 8900, "merchant": "Best Buy",
+  "product": "Sony WH-CH720N", "reason": "Headphones for the flight" }</pre>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>An open standard, not a walled garden</h2>
+      <p class="lead">Card networks and payment companies are each building agent payments on their own rails. Agent Wallet is the neutral layer on the person's side, built on an open spec any agent or wallet can adopt: the <a href="https://github.com/HeyanshShah/agent-wallet/blob/main/docs/AGENT-SPEND-PROTOCOL.md">Agent Spend Protocol</a>.</p>
+      <table class="compare">
+        <thead><tr><th></th><th>Agent Wallet</th><th>Your real card</th><th>A prepaid card</th></tr></thead>
+        <tbody>
+          <tr><td>Rules per agent</td><td class="yes">✓</td><td class="no">–</td><td class="no">–</td></tr>
+          <tr><td>Approve big purchases on your phone</td><td class="yes">✓</td><td class="no">–</td><td class="no">–</td></tr>
+          <tr><td>Scam and price checks before paying</td><td class="yes">✓</td><td class="no">–</td><td class="no">–</td></tr>
+          <tr><td>Agent never sees your real card</td><td class="yes">✓</td><td class="no">–</td><td class="yes">✓</td></tr>
+          <tr><td>Open source, self-hostable</td><td class="yes">✓</td><td class="no">–</td><td class="no">–</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <footer>
+      MIT licensed · <a href="https://github.com/HeyanshShah/agent-wallet">github.com/HeyanshShah/agent-wallet</a>
+    </footer>
+  </div>
+</body>
+</html>

@@ -16,5 +16,7 @@ services:
         sync: false
       - key: CARD_ISSUER
         value: mock
+      - key: SERPAPI_KEY
+        sync: false
       - key: VAPID_SUBJECT
         value: mailto:you@example.com
