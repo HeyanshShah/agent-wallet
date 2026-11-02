@@ -8,6 +8,7 @@ import { Wallet, hashKey } from "./wallet.js";
 import { createApp } from "./app.js";
 import { Passkeys, passkeyConfigFromUrl } from "./passkeys.js";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 try {
   process.loadEnvFile(".env");
@@ -40,7 +41,7 @@ const app = createApp({ wallet, notifier, passkeys, ownerTokenHash, enableDemoCh
 // The browser half of passkeys, served to the approval app from the installed package.
 const webauthnBundle = readFileSync(new URL("../dist/bundle/index.umd.min.js", import.meta.resolve("@simplewebauthn/browser")));
 app.get("/vendor/simplewebauthn.js", (c) => c.body(webauthnBundle, 200, { "Content-Type": "text/javascript" }));
-app.use("/*", serveStatic({ root: "./public" }));
+app.use("/*", serveStatic({ root: fileURLToPath(new URL("../public", import.meta.url)) }));
 
 serve({ fetch: app.fetch, port }, () => {
   console.log(`Agent Wallet running at http://localhost:${port} (card issuer: ${issuer.name})`);
