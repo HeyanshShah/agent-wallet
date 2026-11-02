@@ -75,7 +75,17 @@ export function openDb(path: string): Db {
   const db = new DatabaseSync(path);
   db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
   db.exec(SCHEMA);
+  migrate(db);
   return db;
+}
+
+/** Adds columns introduced after the first release to existing databases. */
+function migrate(db: Db): void {
+  const has = (table: string, column: string) =>
+    (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).some((c) => c.name === column);
+  if (!has("purchase_requests", "risk_flags")) {
+    db.exec("ALTER TABLE purchase_requests ADD COLUMN risk_flags TEXT NOT NULL DEFAULT '[]'");
+  }
 }
 
 export function getSetting(db: Db, key: string): string | undefined {

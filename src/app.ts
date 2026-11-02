@@ -49,6 +49,7 @@ function agentView(request: PurchaseRequest, card?: Card) {
     merchant: request.merchant,
     decision_reason: request.decisionReason,
     expires_at: request.expiresAt,
+    risk_flags: request.riskFlags.length ? request.riskFlags : undefined,
     message: messages[request.status],
     card: usable
       ? {

@@ -54,6 +54,10 @@ button { font: inherit; cursor: pointer; }
 .request .amount { font-size: 2rem; font-weight: 700; letter-spacing: -0.02em; }
 .request .merchant { font-weight: 600; }
 .request .reason { margin: 10px 0 14px; }
+.flag { font-size: 0.9rem; border-radius: 10px; padding: 8px 10px; margin: -4px 0 12px; }
+.flag.high { background: color-mix(in srgb, var(--bad) 14%, transparent); color: var(--bad); font-weight: 600; }
+.flag.medium { background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn); }
+.flag.info { color: var(--muted); padding: 0; }
 .request .actions { display: flex; gap: 10px; }
 .request .meta { font-size: 0.85rem; color: var(--muted); }
 .empty { text-align: center; color: var(--muted); padding: 32px 0; }

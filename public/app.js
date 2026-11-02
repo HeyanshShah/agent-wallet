@@ -78,6 +78,8 @@ async function renderApprovals() {
         <div class="amount">${usd(r.amountCents)}</div>
         <div class="merchant">at ${esc(r.merchant)}${r.category ? ` · ${esc(r.category)}` : ""}</div>
         <p class="reason">"${esc(r.reason)}"</p>
+        ${r.riskFlags.filter((f) => f.level !== "info").map((f) => `<div class="flag ${f.level}">${f.level === "high" ? "⚠️" : "⚡"} ${esc(f.message)}</div>`).join("")}
+        ${r.riskFlags.filter((f) => f.level === "info").map((f) => `<div class="flag info">${esc(f.message)}</div>`).join("")}
         <div class="actions">
           <button class="deny" data-deny="${r.id}">Deny</button>
           <button class="approve" data-approve="${r.id}">Approve</button>

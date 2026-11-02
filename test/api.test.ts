@@ -138,6 +138,16 @@ describe("purchase flow", () => {
     expect(polled.status).toBe("expired");
   });
 
+  it("never auto-approves a risky purchase, and tells the agent why", async () => {
+    const res = await t.req("POST", "/v1/purchases", agentKey, { amount_cents: 999, merchant: "amaz0n-deals.com", reason: "Cheap charger" });
+    const body = await res.json();
+    expect(body.status).toBe("pending");
+    expect(body.card).toBeUndefined();
+    expect(body.risk_flags[0].code).toBe("lookalike_merchant");
+    const pending = await (await t.req("GET", "/api/requests?status=pending", OWNER)).json();
+    expect(pending[0].riskFlags[0].level).toBe("high");
+  });
+
   it("writes everything to the activity log", async () => {
     await buy(1_000);
     await buy(99_999);

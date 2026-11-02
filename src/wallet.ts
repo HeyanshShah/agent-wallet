@@ -3,6 +3,7 @@ import type { Db } from "./db.js";
 import type { CardIssuer } from "./cards.js";
 import type { Notifier } from "./notify.js";
 import { type AgentRules, evaluate, formatUsd } from "./rules.js";
+import { type RiskFlag, type PastPurchase, assessRisk, hasHighRisk } from "./risk.js";
 
 export type RequestStatus = "pending" | "approved" | "auto_approved" | "denied" | "blocked" | "expired" | "completed";
 
@@ -39,6 +40,7 @@ export interface PurchaseRequest {
   createdAt: string;
   decidedAt: string | null;
   expiresAt: string | null;
+  riskFlags: RiskFlag[];
 }
 
 export class WalletError extends Error {
@@ -82,6 +84,7 @@ function rowToRequest(r: any): PurchaseRequest {
     createdAt: r.created_at,
     decidedAt: r.decided_at,
     expiresAt: r.expires_at,
+    riskFlags: JSON.parse(r.risk_flags ?? "[]"),
   };
 }
 
@@ -205,6 +208,19 @@ export class Wallet {
     return row.total;
   }
 
+  /** Recent purchases that went through or are waiting, for risk checks. */
+  private recentPurchases(agentId: string): PastPurchase[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT amount_cents, merchant, created_at FROM purchase_requests
+           WHERE agent_id = ? AND status IN ('pending', ${SPENT_STATUSES.map(() => "?").join(",")})
+           ORDER BY created_at DESC LIMIT 50`,
+        )
+        .all(agentId, ...SPENT_STATUSES) as any[]
+    ).map((r) => ({ amountCents: r.amount_cents, merchant: r.merchant, createdAt: r.created_at }));
+  }
+
   // ---------- purchase requests ----------
 
   private expireStale(): void {
@@ -265,7 +281,12 @@ export class Wallet {
     if (!merchant) throw new WalletError("merchant is required.");
     if (!reason) throw new WalletError("reason is required.");
 
-    const decision = evaluate(agent, { ...input, merchant }, this.spentThisMonth(agent.id));
+    let decision = evaluate(agent, { ...input, merchant }, this.spentThisMonth(agent.id));
+    const risk = assessRisk({ amountCents: input.amountCents, merchant, reason }, this.recentPurchases(agent.id));
+    // A risky purchase is never approved automatically, however small.
+    if (decision.outcome === "auto_approve" && hasHighRisk(risk)) {
+      decision = { outcome: "ask", reason: "Needs your approval: it was flagged as risky." };
+    }
     const id = randomUUID();
     const created = now();
     const status: RequestStatus =
@@ -275,8 +296,8 @@ export class Wallet {
 
     this.db
       .prepare(
-        `INSERT INTO purchase_requests (id, agent_id, amount_cents, merchant, category, reason, status, decision_reason, created_at, decided_at, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO purchase_requests (id, agent_id, amount_cents, merchant, category, reason, status, decision_reason, created_at, decided_at, expires_at, risk_flags)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -290,6 +311,7 @@ export class Wallet {
         created,
         status === "pending" ? null : created,
         expiresAt,
+        JSON.stringify(risk),
       );
 
     const what = `${agent.name} wants ${formatUsd(input.amountCents)} at ${merchant}`;
@@ -299,7 +321,12 @@ export class Wallet {
     }
     if (status === "pending") {
       this.log("request_pending", `Approval needed: ${what}.`, { agentId: agent.id, requestId: id });
-      void this.notifier.push({ title: "Approve purchase?", body: `${what}: ${reason}`, requestId: id });
+      const warning = risk.find((f) => f.level === "high");
+      void this.notifier.push({
+        title: warning ? "⚠️ Risky purchase request" : "Approve purchase?",
+        body: warning ? `${what}. ${warning.message}` : `${what}: ${reason}`,
+        requestId: id,
+      });
       return { request: this.getRequest(id) };
     }
     this.log("request_auto_approved", `Auto-approved: ${what}.`, { agentId: agent.id, requestId: id });
