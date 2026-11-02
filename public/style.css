@@ -123,3 +123,9 @@ nav button { padding: 8px 4px; font-size: 0.92rem; }
 .log-check { font-size: .85rem; padding: 8px 12px; border-radius: 10px; margin-bottom: 12px; }
 .log-check.ok { background: rgba(22, 163, 74, .1); color: #15803d; }
 .log-check.bad { background: rgba(220, 38, 38, .12); color: #b91c1c; font-weight: 600; }
+
+#account-form input { margin-bottom: 10px; }
+.switch { margin-top: 14px; font-size: .95rem; }
+.early { background: rgba(37, 99, 235, .1); color: var(--accent); border-radius: 10px; padding: 8px 12px; font-size: .9rem; font-weight: 600; }
+.row-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+.danger { color: var(--bad) !important; }

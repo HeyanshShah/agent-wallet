@@ -1,4 +1,6 @@
-# One-click deploy on Render: https://render.com/deploy?repo=https://github.com/HeyanshShah/agent-wallet
+# One-click deploy of Agent Wallet Cloud (the hosted, sign-up version) on Render.
+# https://render.com/deploy?repo=https://github.com/HeyanshShah/agent-wallet
+# To run a private, single-person wallet instead, set HOSTED to 0 (you then sign in with OWNER_TOKEN).
 services:
   - type: web
     name: agent-wallet
@@ -10,6 +12,12 @@ services:
       mountPath: /data
       sizeGB: 1
     envVars:
+      - key: HOSTED
+        value: "1"
+      - key: FREE_UNTIL
+        value: "2027-11-02"
+      - key: SIGNUPS_OPEN
+        value: "1"
       - key: OWNER_TOKEN
         generateValue: true
       - key: WALLET_ENCRYPTION_KEY
@@ -25,4 +33,4 @@ services:
       - key: LITHIC_WEBHOOK_SECRET
         sync: false
       - key: VAPID_SUBJECT
-        value: mailto:you@example.com
+        sync: false

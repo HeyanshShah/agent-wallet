@@ -94,7 +94,10 @@ export function createApp(opts: {
   wallet: Wallet;
   notifier: Notifier;
   passkeys: Passkeys;
-  ownerTokenHash: string;
+  /** Hash of the owner token (self-hosted). */
+  ownerTokenHash?: string;
+  /** Or a function that checks the owner's credential (hosted: a login session). */
+  ownerAuth?: (token: string) => boolean;
   enableDemoCharge?: boolean;
   /** The address the wallet is reached at. Used as the issuer of signed approvals. */
   publicUrl?: string;
@@ -102,9 +105,11 @@ export function createApp(opts: {
   lithicWebhookSecret?: string;
 }) {
   const { wallet, notifier, passkeys, ownerTokenHash } = opts;
-  const ownerHashBuf = Buffer.from(ownerTokenHash, "hex");
+  const ownerHashBuf = Buffer.from(ownerTokenHash ?? "", "hex");
   const isOwner = (token: string | undefined) => {
     if (!token) return false;
+    if (opts.ownerAuth) return opts.ownerAuth(token);
+    if (!ownerHashBuf.length) return false;
     const given = Buffer.from(hashKey(token), "hex");
     return given.length === ownerHashBuf.length && timingSafeEqual(given, ownerHashBuf);
   };

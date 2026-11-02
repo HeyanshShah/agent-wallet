@@ -10,7 +10,7 @@ Spending rules, Face ID approvals, scam and price checks, and one-time cards for
 
 ![Agent Wallet demo: an agent asks for money, the phone shows a price check, Face ID approves, a fake store is caught, and an over-limit purchase is blocked](docs/media/demo.gif)
 
-[Website](https://heyanshshah.github.io/agent-wallet/) · [Quick start](#quick-start) · [Connect your agent](docs/INTEGRATE.md) · [Protocol](docs/AGENT-SPEND-PROTOCOL.md) · [Deploy](#deploy-so-your-phone-can-reach-it)
+[Website](https://heyanshshah.github.io/agent-wallet/) · [Self-host](#self-host) · [Connect your agent](docs/INTEGRATE.md) · [Protocol](docs/AGENT-SPEND-PROTOCOL.md) · [Deploy](#deploy-so-your-phone-can-reach-it)
 
 AI agents can now browse and check out, but handing one your real card is a bad idea. Agent Wallet sits between the agent and your money:
 
@@ -31,7 +31,11 @@ What makes it different:
 - **Insights.** See spending by agent, category and store, the last 6 months, and how much money your rules stopped.
 - **Works with any agent.** One-line install for Claude and any MCP client, plus an OpenAPI spec for everything else. See [docs/INTEGRATE.md](docs/INTEGRATE.md).
 
-## Quick start
+## Use it
+
+**Agent Wallet Cloud:** sign up at [agent-wallet.onrender.com](https://agent-wallet.onrender.com) and you're done. It's free during early access, until November 2027.
+
+## Self-host
 
 Requires Node.js 22.13 or newer.
 
@@ -57,7 +61,20 @@ npx github:HeyanshShah/agent-wallet
 
 ## Deploy (so your phone can reach it)
 
-Phone notifications and Face ID need HTTPS. The easiest route is [Render](https://render.com/deploy?repo=https://github.com/HeyanshShah/agent-wallet), which reads `render.yaml`: it builds the Dockerfile, adds a disk for the database, and generates your `OWNER_TOKEN` (find it under the service's Environment tab). Set `PUBLIC_URL` to the address Render gives you.
+Phone notifications and Face ID need HTTPS. The easiest route is [Render](https://render.com/deploy?repo=https://github.com/HeyanshShah/agent-wallet), which reads `render.yaml`: it builds the Dockerfile, adds a disk for the data, and generates the encryption key. Set `PUBLIC_URL` to the address Render gives you. `render.yaml` runs the hosted, sign-up version; for a private wallet just for you, set `HOSTED=0` and sign in with the generated `OWNER_TOKEN` (under the service's Environment tab).
+
+## Hosted mode (many customers)
+
+With `HOSTED=1`, one server runs a wallet for anyone who signs up:
+
+- People create an account with an email and password (hashed with scrypt; sign-in attempts are rate limited) and get a 30-day session.
+- **Each customer gets their own database file** in `DATA_DIR/tenants/`, with their own signing key, passkeys and push settings. Agent keys and card tokens are mapped to the right customer in `DATA_DIR/control.db`, so agents use the same `WALLET_URL` for everyone.
+- Each customer's public routes (discovery, public key, `/verify`, notification buttons) live under `/t/<account id>/`, and that address is the issuer of their signed approvals.
+- One Lithic webhook serves every customer: each charge is routed to the wallet that issued the card.
+- Customers can delete their account and all its data from the Agents tab.
+- `FREE_UNTIL` shows an early-access date in the app, and `SIGNUPS_OPEN=0` closes sign-ups.
+
+Not yet in hosted mode: email verification and password reset (there's no email provider yet), and billing.
 
 Any Docker host works too:
 
@@ -205,7 +222,8 @@ npm run dev       # restart on changes
 | `src/prices.ts` | Price checks |
 | `src/wallet.ts` | Agents, requests, approvals, cards, activity log |
 | `src/cards.ts` | Mock and Lithic card issuers |
-| `src/app.ts` | HTTP API |
+| `src/app.ts` | HTTP API for one wallet |
+| `src/hosted.ts` | Accounts, sign-up and one wallet per customer |
 | `src/mcp.ts` | MCP server for agents |
 | `src/notify.ts` | Live updates and web push |
 | `public/` | The approval app |

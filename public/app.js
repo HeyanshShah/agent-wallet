@@ -7,6 +7,7 @@ const when = (iso) => new Date(iso).toLocaleString([], { month: "short", day: "n
 
 let token = null;
 try { token = localStorage.getItem("ownerToken"); } catch {}
+let config = { hosted: false };
 
 async function api(method, path, body) {
   const res = await fetch(path, {
@@ -45,8 +46,11 @@ function toast(msg) {
 // ---------- sign in ----------
 
 function signOut() {
+  if (config.hosted && token) fetch("/auth/logout", { method: "POST", headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
   try { localStorage.removeItem("ownerToken"); } catch {}
   token = null;
+  $("#token-signin").hidden = config.hosted;
+  $("#account-signin").hidden = !config.hosted;
   $("#app").hidden = true;
   $("#signin").hidden = false;
 }
@@ -63,6 +67,65 @@ $("#signin-form").addEventListener("submit", async (e) => {
   try { localStorage.setItem("ownerToken", token); } catch {}
   start();
 });
+
+// Hosted: sign up or sign in with email and password.
+let signupMode = true;
+function setSignupMode(on) {
+  signupMode = on;
+  $("#account-submit").textContent = on ? "Create free account" : "Sign in";
+  $("#switch-text").textContent = on ? "Already have an account?" : "New here?";
+  $("#switch-mode").textContent = on ? "Sign in" : "Create an account";
+  $("#account-form").password.autocomplete = on ? "new-password" : "current-password";
+  $("#signin-error").hidden = true;
+}
+$("#switch-mode").addEventListener("click", (e) => {
+  e.preventDefault();
+  setSignupMode(!signupMode);
+});
+
+$("#account-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const res = await fetch(signupMode ? "/auth/signup" : "/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: f.get("email"), password: f.get("password") }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    $("#signin-error").textContent = data.error || "That didn't work. Try again.";
+    $("#signin-error").hidden = false;
+    return;
+  }
+  token = data.token;
+  try { localStorage.setItem("ownerToken", token); } catch {}
+  e.target.reset();
+  start();
+});
+
+const longDate = (iso) => new Date(iso).toLocaleDateString([], { year: "numeric", month: "long", day: "numeric" });
+
+async function renderAccount() {
+  if (!config.hosted) return;
+  const a = await api("GET", "/api/account");
+  const box = $("#account");
+  box.hidden = false;
+  box.innerHTML = `<strong>Your account</strong>
+    <p class="muted">${esc(a.email)}<br>${a.freeUntil ? `Early access: everything is free until ${longDate(a.freeUntil)}.` : "Early access: everything is free."}</p>
+    <div class="row-buttons"><button class="ghost" id="sign-out">Sign out</button><button class="ghost danger" id="delete-account">Delete account</button></div>`;
+  $("#sign-out").onclick = () => signOut();
+  $("#delete-account").onclick = async () => {
+    const password = prompt("This deletes your account, agents and history for good. Enter your password to confirm.");
+    if (!password) return;
+    try {
+      await api("DELETE", "/api/account", { password });
+      signOut();
+      toast("Your account was deleted.");
+    } catch (err) {
+      toast(err.message);
+    }
+  };
+}
 
 // ---------- tabs ----------
 
@@ -418,7 +481,7 @@ async function refresh() {
   const tab = document.querySelector("nav button.active").dataset.tab;
   try {
     if (tab === "approvals") await renderApprovals();
-    if (tab === "agents") await Promise.all([renderAgents(), renderSecurity()]);
+    if (tab === "agents") await Promise.all([renderAgents(), renderSecurity(), renderAccount()]);
     if (tab === "activity") await renderActivity();
     if (tab === "insights") await renderInsights();
     if (tab !== "approvals") await renderApprovals(); // keeps the badge current
@@ -435,5 +498,19 @@ function start() {
   setupPush().catch(() => {});
 }
 
-if (token) start();
-else signOut();
+async function boot() {
+  try {
+    config = await (await fetch("/config")).json();
+  } catch {}
+  if (config.hosted && config.freeUntil) {
+    $("#early-access").textContent = `Free during early access, until ${longDate(config.freeUntil)}.`;
+    $("#early-access").hidden = false;
+  }
+  if (config.hosted && config.signupsOpen === false) {
+    setSignupMode(false);
+    $(".switch").hidden = true;
+  }
+  if (token) start();
+  else signOut();
+}
+boot();
