@@ -36,7 +36,7 @@ async function waitForDecision(id: string): Promise<any> {
   return data;
 }
 
-const server = new McpServer({ name: "agent-wallet", version: "0.1.0" });
+const server = new McpServer({ name: "agent-wallet", version: "0.2.0" });
 
 server.registerTool(
   "check_budget",
