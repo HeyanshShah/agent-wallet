@@ -91,6 +91,17 @@ function migrate(db: Db): void {
     db.exec("ALTER TABLE purchase_requests ADD COLUMN product_url TEXT");
     db.exec("ALTER TABLE purchase_requests ADD COLUMN price_check TEXT");
   }
+  if (!has("purchase_requests", "idempotency_key")) {
+    db.exec("ALTER TABLE purchase_requests ADD COLUMN idempotency_key TEXT");
+    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_requests_idem ON purchase_requests(agent_id, idempotency_key)");
+  }
+  if (!has("purchase_requests", "auto_approved")) {
+    // Remembers auto-approval after a charge moves the status to 'completed'.
+    db.exec("ALTER TABLE purchase_requests ADD COLUMN auto_approved INTEGER NOT NULL DEFAULT 0");
+    db.exec(
+      "UPDATE purchase_requests SET auto_approved = 1 WHERE status = 'auto_approved' OR (status = 'completed' AND decision_reason LIKE 'Under the%auto-approve limit.')",
+    );
+  }
 }
 
 export function getSetting(db: Db, key: string): string | undefined {

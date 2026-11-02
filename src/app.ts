@@ -131,6 +131,21 @@ export function createApp(opts: {
 
   app.get("/health", (c) => c.json({ ok: true }));
 
+  // Discovery document for the Agent Spend Protocol (docs/AGENT-SPEND-PROTOCOL.md).
+  app.get("/.well-known/agent-spend", (c) => {
+    const base = new URL(c.req.url).origin;
+    return c.json({
+      protocol: "agent-spend",
+      version: "0.1",
+      purchases_endpoint: `${base}/v1/purchases`,
+      limits_endpoint: `${base}/v1/me`,
+      openapi: `${base}/openapi.json`,
+      auth: ["bearer"],
+      credential_types: ["one_time_card"],
+      features: ["risk_flags", "price_check", "idempotency", "owner_approval", "passkey_approval"],
+    });
+  });
+
   // ---------- agent API (Bearer = agent key) ----------
 
   const agentAuth = async (c: Context<Env>, next: Next) => {
@@ -160,14 +175,17 @@ export function createApp(opts: {
 
   app.post("/v1/purchases", async (c) => {
     const body = purchaseSchema.parse(await c.req.json());
-    const { request, card } = await wallet.requestPurchase(c.get("agent"), {
+    const idempotencyKey = c.req.header("Idempotency-Key")?.trim().slice(0, 200) || undefined;
+    const { request, card, replayed } = await wallet.requestPurchase(c.get("agent"), {
       amountCents: body.amount_cents,
       merchant: body.merchant,
       category: body.category,
       reason: body.reason,
       product: body.product,
       productUrl: body.product_url,
+      idempotencyKey,
     });
+    if (replayed) return c.json(agentView(request, wallet.cardForRequest(request.id)), 200);
     if (request.status === "pending") {
       // Give the price check a few seconds so the notification can mention a better deal.
       void Promise.race([wallet.checkPrice(request.id), new Promise((r) => setTimeout(r, 4000))]).then(() =>

@@ -1,6 +1,16 @@
 # Agent Wallet
 
-Spending rules, phone approvals and one-time cards for AI agents.
+**Let AI agents shop for you, without handing them your card.**
+
+Spending rules, Face ID approvals, scam and price checks, and one-time cards for any AI agent. Open source, and set up in five minutes.
+
+[![CI](https://github.com/HeyanshShah/agent-wallet/actions/workflows/ci.yml/badge.svg)](https://github.com/HeyanshShah/agent-wallet/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Agent Spend Protocol](https://img.shields.io/badge/protocol-agent--spend%200.1-7c3aed.svg)](docs/AGENT-SPEND-PROTOCOL.md)
+
+![Agent Wallet demo: an agent asks for money, the phone shows a price check, Face ID approves, a fake store is caught, and an over-limit purchase is blocked](docs/media/demo.gif)
+
+[Website](https://heyanshshah.github.io/agent-wallet/) · [Quick start](#quick-start) · [Connect your agent](docs/INTEGRATE.md) · [Protocol](docs/AGENT-SPEND-PROTOCOL.md) · [Deploy](#deploy-so-your-phone-can-reach-it)
 
 AI agents can now browse and check out, but handing one your real card is a bad idea. Agent Wallet sits between the agent and your money:
 
@@ -142,6 +152,10 @@ Risk checks run alongside the rules, in [`src/risk.ts`](src/risk.ts). They never
 
 Both are pure functions, so they're easy to test and change.
 
+## The Agent Spend Protocol
+
+Agent Wallet implements an open draft standard for how agents ask wallets for money: [docs/AGENT-SPEND-PROTOCOL.md](docs/AGENT-SPEND-PROTOCOL.md). A wallet publishes `/.well-known/agent-spend`, and agents send one request shape and handle seven statuses. Retries are safe with an `Idempotency-Key` header. The protocol is rail-neutral: the credential can be a virtual card today, and network tokens or signed mandates later. Feedback is welcome as issues.
+
 ## Development
 
 ```bash
@@ -163,9 +177,17 @@ npm run dev       # restart on changes
 | `src/notify.ts` | Live updates and web push |
 | `public/` | The approval app |
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Good first issues: new scam patterns, new card issuers, and agent framework examples.
+
 ## Next steps
 
 - Lithic webhooks for real charge events, and merchant-locked cards
 - Require Face ID to change rules, not just to approve
 - Multiple users with real sign-in
 - Signed approvals that work with Google AP2, Visa Intelligent Commerce and Mastercard Agent Pay
+
+## License
+
+[MIT](LICENSE)

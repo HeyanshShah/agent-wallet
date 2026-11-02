@@ -41,5 +41,11 @@
     "public",
     "README.md",
     ".env.example"
-  ]
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/HeyanshShah/agent-wallet"
+  },
+  "homepage": "https://heyanshshah.github.io/agent-wallet/"
 }

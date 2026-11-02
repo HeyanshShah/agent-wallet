@@ -236,8 +236,13 @@ export class Wallet {
     const spent = `status IN (${SPENT_STATUSES.map((x) => `'${x}'`).join(",")})`;
     const q = (sql: string, ...args: (string | number)[]) => this.db.prepare(sql).all(...args) as any[];
 
+    // A charged purchase becomes 'completed', so split those by how they were approved.
     const counts = Object.fromEntries(
-      q("SELECT status, COUNT(*) AS n FROM purchase_requests WHERE created_at >= ? GROUP BY status", monthStart).map((r) => [r.status, r.n]),
+      q(
+        `SELECT CASE WHEN status = 'completed' THEN (CASE WHEN auto_approved = 1 THEN 'auto_approved' ELSE 'approved' END) ELSE status END AS s,
+                COUNT(*) AS n FROM purchase_requests WHERE created_at >= ? GROUP BY s`,
+        monthStart,
+      ).map((r) => [r.s, r.n]),
     );
     const sum = (where: string) =>
       (this.db.prepare(`SELECT COALESCE(SUM(amount_cents), 0) AS c FROM purchase_requests WHERE created_at >= ? AND ${where}`).get(monthStart) as { c: number }).c;
@@ -264,7 +269,7 @@ export class Wallet {
       )[0].n as number,
       counts: {
         autoApproved: counts.auto_approved ?? 0,
-        approved: (counts.approved ?? 0) + (counts.completed ?? 0),
+        approved: counts.approved ?? 0,
         denied: counts.denied ?? 0,
         blocked: counts.blocked ?? 0,
         expired: counts.expired ?? 0,
@@ -342,8 +347,23 @@ export class Wallet {
 
   async requestPurchase(
     agent: Agent,
-    input: { amountCents: number; merchant: string; category?: string; reason: string; product?: string; productUrl?: string },
-  ): Promise<{ request: PurchaseRequest; card?: Card }> {
+    input: {
+      amountCents: number;
+      merchant: string;
+      category?: string;
+      reason: string;
+      product?: string;
+      productUrl?: string;
+      /** A retry with the same key returns the original request instead of creating a second one. */
+      idempotencyKey?: string;
+    },
+  ): Promise<{ request: PurchaseRequest; card?: Card; replayed?: boolean }> {
+    if (input.idempotencyKey) {
+      const existing = this.db
+        .prepare("SELECT id FROM purchase_requests WHERE agent_id = ? AND idempotency_key = ?")
+        .get(agent.id, input.idempotencyKey) as { id: string } | undefined;
+      if (existing) return { request: this.getRequest(existing.id), card: this.cardForRequest(existing.id), replayed: true };
+    }
     const merchant = input.merchant.trim();
     const reason = input.reason.trim();
     if (!merchant) throw new WalletError("merchant is required.");
@@ -364,8 +384,8 @@ export class Wallet {
 
     this.db
       .prepare(
-        `INSERT INTO purchase_requests (id, agent_id, amount_cents, merchant, category, reason, status, decision_reason, created_at, decided_at, expires_at, risk_flags, product, product_url)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO purchase_requests (id, agent_id, amount_cents, merchant, category, reason, status, decision_reason, created_at, decided_at, expires_at, risk_flags, product, product_url, auto_approved, idempotency_key)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -382,6 +402,8 @@ export class Wallet {
         JSON.stringify(risk),
         input.product?.trim() || null,
         input.productUrl?.trim() || null,
+        status === "auto_approved" ? 1 : 0,
+        input.idempotencyKey ?? null,
       );
 
     const what = `${agent.name} wants ${formatUsd(input.amountCents)} at ${merchant}`;
